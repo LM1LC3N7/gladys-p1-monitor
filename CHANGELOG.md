@@ -10,6 +10,14 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+### Fixed
+
+- While a consumption index is held, a lower value that does not fit the short
+  margin counted from the hold (an old reference) is held in its turn, its kWh
+  shown, instead of being taken: nothing is billed without the user.
+- The log of a held index names the "Accept the held index" button instead of
+  a save of the configuration.
+
 ## [0.1.1] - 2026-10-18
 
 ### Added

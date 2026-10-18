@@ -23,7 +23,9 @@
 // - while a jump is held, every value at or above it stays held: the margin
 //   growing while nothing is published must never cover it;
 // - a value back to the usual rule (the drop or the jump was a glitch) ends
-//   the hold.
+//   the hold, but only within the margin counted from the hold itself: with
+//   an old reference, a value under a held jump that does not fit that short
+//   margin is held in its turn (its kWh shown), never taken.
 //
 // `indexOfTariffs` checks the two tariffs before their sum reaches the
 // guard: a tariff that was above 0 and reads 0, or that drops alone, is a
@@ -175,7 +177,12 @@ export class IndexGuard {
       this.held = { ...this.held, to: value, at };
       return false;
     }
-    if (follows(this.last, value, at)) {
+    // While a value is held, the margin since the reference (maybe days old)
+    // is not enough: the value must also fit the short margin counted from
+    // the hold. Otherwise it becomes the value held itself, its kWh shown,
+    // nothing billed without the user.
+    const sinceHold = !this.held || value - this.last.value <= margin(this.held.at, at);
+    if (sinceHold && follows(this.last, value, at)) {
       return this.take(value, at);
     }
     const direction = value > this.last.value ? 'up' : 'down';

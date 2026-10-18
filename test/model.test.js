@@ -513,6 +513,23 @@ test('index guard: a value held read back from /data is dated at its loading', (
   fair.acceptHeld();
   assert.equal(fair.accept(1005.5, 5 * DAY + MINUTE), true);
 });
+test('index guard: under a held jump, an old reference never lets a big rise through', () => {
+  const DAY = 24 * 60 * MINUTE;
+  const guard = new IndexGuard({ value: 1000, at: 0 });
+  assert.equal(guard.accept(15_000, MINUTE), false);
+  // Still held 10 days later: the reference is now old, its margin alone
+  // would cover 24,000 kWh.
+  assert.equal(guard.accept(15_000, 10 * DAY), false);
+  assert.equal(guard.held.threshold, 15_000);
+  // 14,000, under the jump, read a minute later: held in its turn, 0 kWh taken.
+  assert.equal(guard.accept(14_000, 10 * DAY + MINUTE), false);
+  assert.deepEqual(guard.last, { value: 1000, at: 0 });
+  assert.equal(guard.held.to, 14_000);
+  assert.equal(guard.held.from, 1000);
+  // A value back near the reference still ends the hold.
+  assert.equal(guard.accept(1000.2, 10 * DAY + 2 * MINUTE), true);
+  assert.equal(guard.held, undefined);
+});
 test('index of the tariffs: both there; a register at 0 or dropping alone is no index', () => {
   assert.equal(indexOfTariffs(5000, 3000), 8000);
   assert.equal(indexOfTariffs(5000, 0), 5000, 'a single-tariff meter, no reference yet');

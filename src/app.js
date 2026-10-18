@@ -506,7 +506,7 @@ export class P1MonitorApp {
       await this.saveGuard(indexId);
       if (total !== undefined && !plausible) {
         this.logger.warn(
-          `P1 Monitor consumption index ${guard.held?.direction === 'down' ? 'drop' : 'jump'} held back: save the configuration to accept it`,
+          `P1 Monitor consumption index ${guard.held?.direction === 'down' ? 'drop' : 'jump'} held back: the "Accept the held index" button takes it`,
         );
       }
       // While a value is held, the last accepted one is sent again (no delta
