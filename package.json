@@ -1,6 +1,6 @@
 {
   "name": "gladys-p1-monitor",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "P1 Monitor (ztatz) for Gladys Assistant: the smart meter read through its local API, power and electricity index fed to the energy monitoring, tariffs, injection, phases, prices, gas and water as sensors.",
   "type": "module",
