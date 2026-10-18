@@ -96,15 +96,20 @@
   back bills the whole difference (9,194 → 10 → 9,194 = 9,184 fictive kWh).
   Hence:
   - (a) `indexOfTariffs`: both tariffs present, finite, at or above 0, the
-    sum above 0; against the tariffs of the last index accepted (kept in
-    /data with the guard), a tariff that was above 0 and reads 0, or a tariff
-    lower while the other is not, gives no index for that reading (one
-    register glitching is not a drop). Both lower is a real drop, for the
-    guard. A tariff at 0 is accepted when it already was 0, or with no
-    reference yet: a single-tariff meter (Belgian mono-horaire) keeps its
-    second register at 0 and must still get an index (deliberately softer
-    than "each tariff above 0" asked by the review, which would give such a
-    meter no index at all);
+    sum finite and above 0. Against the tariffs of the last index accepted
+    (kept in /data with the guard): both tariffs lower is checked FIRST and
+    is a real drop, for the guard (round 2, m1: even when one of them reads
+    0); otherwise a tariff that was above 0 and reads 0, or a tariff lower
+    while the other is not, gives no index for that reading (one register
+    glitching is not a drop). A tariff at 0 is accepted when it already was
+    0, or with no reference yet: a single-tariff meter (Belgian
+    mono-horaire) keeps its second register at 0 and must still get an index
+    (deliberately softer than "each tariff above 0" asked by the review,
+    which would give such a meter no index at all). The tariff reference is
+    never cleared by a save (round 2, m1); a register stuck in a state that
+    gives no index (a new meter with a register staying at 0) has one way
+    out, documented: delete the device and create it again (`onDeviceCreated`
+    clears the guard, the tariffs and the /data entry). Tested;
   - (b) never 0;
   - (c) a value plausible after the reference (not lower, at most 100 kW on
     average + 0.5 kWh) goes through; a value EQUAL to the reference goes
@@ -113,23 +118,31 @@
     /data and in Gladys keeps the OLDEST date, otherwise the most recent
     reference wins;
   - (d) a drop and a jump up are held (`held = { direction, from, to,
-threshold }`), never confirmed by repetition nor by time; every value at
-    or above a held jump stays held; the last accepted value is sent again;
-    the status shows it; a value back to the usual rule ends the hold;
-  - (e) only a save of the configuration (`start(…, { fresh: true })`)
-    accepts the value held, and only in its direction (an accepted drop
-    never takes a jump); the tariff reference is cleared then (a register
-    that changed for good). A drop taken bills nothing (negative delta), the
-    values rise from there; a jump taken is counted once. The status and the
-    docs say "X kWh will be counted at once as consumption; save only if
-    this energy was really consumed";
-  - (f) a reconnection never accepts; the guard starts again at
-    `onDeviceCreated` (its /data entry removed, guard, tariffs and saved key
-    reset after the save, review M2);
+threshold, at }`, `at` the time `to` was read), never confirmed by
+    repetition nor by time; every value at or above a held jump stays held;
+    the last accepted value is sent again; the status shows it, also in the
+    "unreachable" status (round 2, R2); a value back to the usual rule ends
+    the hold;
+  - (e) only the `accept_held_index` action (round 2, R2) accepts, never a
+    save of the configuration nor a reconnection. It accepts the value shown
+    (`held.to` read at `held.at`) and answers with what will be counted (the
+    jump in kWh, or 0 kWh for a drop). The acceptance is bounded (round 2,
+    R1): a jump is taken only for `held.to ≤ v ≤ held.to + 100 kW × (at −
+held.at) + 0.5 kWh`, a drop only for `v ≤ held.to + margin`; any other
+    value is held again and the acceptance dropped. An acceptance is not
+    kept in /data (a restart asks again). A drop taken bills nothing
+    (negative delta), the values rise from there; a jump taken is counted
+    once;
+  - (f) the guard starts again at `onDeviceCreated` (its /data entry
+    removed, guard, tariffs and saved key reset after the save, review M2);
   - (g) the margin grows with the time since the last accepted value: after
     24 h of outage, up to 2,400 kWh pass at once (review M6, documented).
 - **Powers** (review I2): above 100 kW (`POWER_MAX`), the power taken, the
-  power injected and the powers per phase are undefined (a glitch).- **Frozen reading**: P1 Monitor keeps serving its last reading when the P1
+  power injected and the powers per phase are undefined (a glitch).
+- **Secondary pages and the meter** (round 2, m4): the outcome of a
+  secondary page counts only when the meter answered; with the P1 Monitor
+  down, a page failing is neither logged nor delayed, it is read again with
+  the meter.- **Frozen reading**: P1 Monitor keeps serving its last reading when the P1
   cable is out. The `TIMESTAMP_UTC` unchanged for 5 minutes (measured on our
   clock, so no clock skew) stops the power and the phases, with a status
   note; the indexes are still published (unchanged, so no delta).
@@ -167,6 +180,67 @@ threshold }`), never confirmed by repetition nor by time; every value at
 - **Gladys version**: `>=5.2.0`, like the other energy integrations.
 - **Not read in v0.1**: the dynamic tariffs, the history pages, the peak
   power of the Belgian capacity tariff, the litres of water of the day.
+
+## Port to gladys-youless
+
+gladys-youless (published) has the same guard and the same flaw: a drop
+confirmed after 60 minutes then a rise back bills the whole difference. To
+port, from this repository:
+
+- **`src/guard.js`**: replace it by this one (`IndexGuard`, `margin`,
+  `follows`, `acceptHeld`, `withinAccepted`):
+  - no drop confirmation by time: remove the `drop` branch and
+    `INDEX_DROP_CONFIRM` (`src/constants.js`); a drop is held like a jump;
+  - `held = { direction: 'up' | 'down', from, to, threshold, at }` replaces
+    `jump`; `accepted = { direction, to, at }` replaces `jumpAccepted`;
+  - R1: an acceptance takes only `held.to ≤ v ≤ held.to + margin(held.at,
+at)` for a jump, `v ≤ held.to + margin` for a drop; otherwise held again,
+    acceptance dropped;
+  - a value equal to the reference is accepted without moving `last.at`; at
+    a restart, the same value in /data and Gladys keeps the oldest date;
+  - **migration of /data** (`/data/youless-state.json` exists on installed
+    devices): in the constructor, read the old `{ last, jump: { from, to,
+threshold } }` as `held = { direction: 'up', from, to, threshold, at }`
+    with `at` the time of loading (pass `now` to the constructor), never
+    `last.at`: no date was kept for the jump, and an older date would widen
+    the range an acceptance takes. Write the new shape at the next save.
+    Test it with an old state.
+- **`indexOfTariffs`**: copy it, and call it ONLY on the P1 path of the LS120
+  (`/e` Enelogic with P1 values: `p1`, `p2`), never on `cnt` (LS110,
+  PVOutput) nor on `net` (LS120 without P1). Keep `p1Known` and `p1Outage`
+  as they are (a read without P1 once P1 was seen still gives no index).
+  The tariffs `{ p1, p2 }` of the last index accepted are kept in /data with
+  the guard (`saveGuard`), never cleared by a save; `onDeviceCreated` clears
+  them.
+- **R2, `accept_held_index` action**: manifest action (labels en/fr as
+  here), `ACTIONS.ACCEPT_HELD` in `src/constants.js`, `gladys.onAction` in
+  `index.js`, `acceptHeldIndex()` in `src/app.js` (builds the guard from
+  Gladys and /data if needed, `acceptHeld()`, publishes at once, answers with
+  the kWh counted). Remove the acceptance from `doStart` (`fresh`): a save of
+  the form accepts nothing. The held note is added to the "unreachable"
+  status too (`failureMessage`).
+- **`src/app.js`**: `acceptJump` → `acceptHeld`, `guard.jump` →
+  `guard.held` (messages, logs, `okMessage`), the tariffs in `saveGuard` and
+  in the guard construction (`guardOf`).
+- **`src/i18n.js`**: `notes.jump` → `notes.held` (drop and jump messages,
+  "X kWh will be counted at once as consumption; accept only if this
+  energy was really consumed", "Saving the configuration accepts nothing"),
+  `accept.nothing / up / down` for the action, `unreachable(…, notes)`.
+- **Docs fr/en, README, TODO, CHANGELOG**: remove "a drop is accepted after
+  60 minutes" and "save the configuration to accept"; describe the action,
+  its bounds, the way out of a stuck register (delete and create the device
+  again), the margin after a long outage. A `### Fixed` entry in the
+  CHANGELOG (fictive kWh after a confirmed drop then a rise).
+- **Tests** (`test/model.test.js`, `test/app.test.js`, adapted to the
+  YouLess fixtures): drop held a week then back (no fictive kWh); drop
+  accepted by the action then a rise (0 then the rise only); an accepted
+  drop never takes a jump; an acceptance bounded (1000 → 1005 accepted, then
+  5000 held, nothing billed); frozen 3 h then +4 kWh accepted; same value
+  keeps the oldest date at a restart; p2 at 0 for 90 minutes then back;
+  both P1 tariffs lower is a drop; a save of the form accepts nothing; the
+  held note in the unreachable status; the old /data state migrated; the
+  manifest test lists both actions.
+- Then the usual definition of done, and a patch release.
 
 ## Ideas
 

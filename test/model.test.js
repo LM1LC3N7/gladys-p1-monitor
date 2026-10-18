@@ -369,8 +369,14 @@ test('index guard: a jump up is never confirmed by repetition, only by the user'
   for (let i = 1; i <= 500; i += 1) {
     assert.equal(guard.accept(6000 + i * 0.01, i * MINUTE), false);
   }
-  assert.deepEqual(guard.held, { direction: 'up', from: 1000, to: 6005, threshold: 6000.01 });
-  guard.acceptHeld();
+  assert.deepEqual(guard.held, {
+    direction: 'up',
+    from: 1000,
+    to: 6005,
+    threshold: 6000.01,
+    at: 500 * MINUTE,
+  });
+  assert.deepEqual(guard.acceptHeld(), { direction: 'up', from: 1000, to: 6005 });
   assert.equal(guard.accept(6005.01, 501 * MINUTE), true);
   assert.equal(guard.held, undefined);
   const back = new IndexGuard({ value: 1000, at: 0 });
@@ -385,7 +391,13 @@ test('index guard: a held jump is never covered by the margin growing over time'
   const guard = new IndexGuard({ value: 2.5, at: 0 });
   assert.equal(guard.accept(12345, MINUTE), false);
   assert.equal(guard.accept(12345.5, 200 * 60 * MINUTE), false);
-  assert.deepEqual(guard.held, { direction: 'up', from: 2.5, to: 12345.5, threshold: 12345 });
+  assert.deepEqual(guard.held, {
+    direction: 'up',
+    from: 2.5,
+    to: 12345.5,
+    threshold: 12345,
+    at: 200 * 60 * MINUTE,
+  });
   assert.equal(guard.accept(2.6, 200 * 60 * MINUTE + MINUTE), true);
 });
 
@@ -455,6 +467,36 @@ test('index guard: its state survives a restart; same value, the oldest date', (
   );
 });
 
+test('index guard: an acceptance is bounded to the value shown and the margin since', () => {
+  const guard = new IndexGuard({ value: 1000, at: 0 });
+  assert.equal(guard.accept(1005, MINUTE), false);
+  assert.deepEqual(guard.acceptHeld(), { direction: 'up', from: 1000, to: 1005 });
+  // 5000 is not what the user saw: held again, nothing taken, acceptance dropped.
+  assert.equal(guard.accept(5000, 2 * MINUTE), false);
+  assert.deepEqual(guard.last, { value: 1000, at: 0 });
+  assert.equal(guard.held.to, 5000);
+  assert.equal(guard.accepted, undefined);
+  assert.equal(guard.accept(5000.1, 3 * MINUTE), false, 'still held');
+  // The value shown, plus what the home may draw meanwhile: taken.
+  const fair = new IndexGuard({ value: 1000, at: 0 });
+  fair.accept(1005, MINUTE);
+  fair.acceptHeld();
+  assert.equal(fair.accept(1005.5, 2 * MINUTE), true);
+  // Below the value shown: not the jump accepted either.
+  const below = new IndexGuard({ value: 1000, at: 0 });
+  below.accept(1005, MINUTE);
+  below.acceptHeld();
+  assert.equal(below.accept(1004, 2 * MINUTE), false);
+  // A drop: at most the value shown plus the margin.
+  const drop = new IndexGuard({ value: 1000, at: 0 });
+  drop.accept(10, MINUTE);
+  drop.acceptHeld();
+  assert.equal(drop.accept(900, 2 * MINUTE), false, 'not the drop shown');
+  drop.accept(10, 3 * MINUTE);
+  drop.acceptHeld();
+  assert.equal(drop.accept(10.2, 4 * MINUTE), true);
+  assert.equal(new IndexGuard({ value: 1, at: 0 }).acceptHeld(), undefined, 'nothing held');
+});
 test('index of the tariffs: both there; a register at 0 or dropping alone is no index', () => {
   assert.equal(indexOfTariffs(5000, 3000), 8000);
   assert.equal(indexOfTariffs(5000, 0), 5000, 'a single-tariff meter, no reference yet');
@@ -474,6 +516,7 @@ test('index of the tariffs: both there; a register at 0 or dropping alone is no 
   assert.equal(indexOfTariffs(4000, 3000.1, ref), undefined, 'one tariff drops alone');
   assert.equal(indexOfTariffs(5000, 2999, ref), undefined, 'one tariff drops alone');
   assert.equal(indexOfTariffs(10, 5, ref), 15, 'both drop: a real drop, for the guard');
+  assert.equal(indexOfTariffs(10, 0, ref), 10, 'both lower, one at 0: still a real drop');
   assert.equal(indexOfTariffs(5000.1, 0, { low: 5000, high: 0 }), 5000.1, 'single tariff');
 });
 

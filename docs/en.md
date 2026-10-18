@@ -83,23 +83,31 @@ Assistant does); the HTTPS of P1 Monitor is not used.
   - a **drop** of both tariffs (meter replaced or reset) is **never**
     accepted by itself, not by time either: it is held, the last accepted
     value is sent again to Gladys, and the integration status shows it. If
-    the values come back, they go on normally, without any fictive kWh. If
-    the meter really changed, **save the configuration** of the integration:
-    the new value is accepted, nothing is billed for the drop, and the
-    consumption goes on from there;
+    the values come back, they go on normally, without any fictive kWh;
   - a **jump up** (more than 100 kW on average since the last accepted
     value) is **never** accepted by itself, not by repetition, not by time,
     not by a restart: every value at or above it stays held (the hold is kept
     in `/data`), the last accepted value is sent again to Gladys, and the
-    status shows the jump. If you **save the configuration**, the difference
-    (for instance 5000 kWh) **will be counted at once as consumption**: save
-    only if this energy was really consumed;
+    status shows the jump, even while the P1 Monitor is unreachable;
+  - to accept a held value, click **Accept the held index** in the
+    configuration of the integration. The action takes **exactly the value
+    shown** (plus what the home may use until the next read) and answers with
+    what will be counted: for a jump, the difference (for instance 5000 kWh)
+    **will be counted at once as consumption**, accept only if this energy
+    was really consumed; for a drop, nothing is billed and the consumption
+    goes on from there. Another value read afterwards stays held. **Saving
+    the configuration never accepts anything**;
+  - if a register stays stuck (for instance a new meter with a tariff staying
+    at 0 when it was not) and the status keeps saying "no index", the way
+    out is to **delete the device and create it again** from the Discover
+    tab: its reference starts again;
   - the 100 kW margin counts from the last accepted value: after a long
     outage it grows (24 hours of outage let up to 2400 kWh through at once).
     A frozen reading (same value) does not move the date of the last value,
-    so that the recovery is not taken for a jump.- Unchanged values are sent again only every 10 minutes; on each
-    reconnection to Gladys, the device, all its values and the status are
-    published again.
+    so that the recovery is not taken for a jump.
+- Unchanged values are sent again only every 10 minutes; on each
+  reconnection to Gladys, the device, all its values and the status are
+  published again.
 - The features of the device are fixed when it is created: if a value
   appears later (first solar panels, a water meter), click "Update" in the
   Discover tab: the new values arrive at once. The device published again

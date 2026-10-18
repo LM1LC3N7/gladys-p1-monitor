@@ -25,7 +25,7 @@ the notes of the version's GitHub Release.
   never 0, never a partial sum, a register at 0 or dropping alone ignored;
   a drop held (never confirmed by time); a jump over 100 kW on average held whatever the time
   passed and across restarts (kept in `/data`), shown in the status and
-  accepted only when the user saves the configuration (the difference counted
+  accepted only by the "Accept the held index" action (the difference counted
   once). The other counters are never sent at 0.
 - A frozen reading (same timestamp for 5 minutes) stops the power and the
   phases, and the status says so.
@@ -36,6 +36,9 @@ the notes of the version's GitHub Release.
 - Resilience: an unreachable P1 Monitor is tried again after 10 s, doubled up
   to 5 minutes; each reconnection to Gladys publishes the device, every value
   and the status again.
+- "Accept the held index" button: takes exactly the value held shown in the
+  status (a jump counted once, a drop billing nothing) and answers with the
+  kWh counted; a save of the configuration never accepts anything.
 - "Test the connection" button: reads the power and the consumption index
   once.
 - Documentation in English and French; `LICENSE` (Apache-2.0) and
@@ -52,5 +55,12 @@ the notes of the version's GitHub Release.
   of an old address publishes nothing; the created device still offered when
   the P1 Monitor is unreachable at the start; pacing on a monotonic clock;
   secondary pages read in parallel with the meter.
+- Review round 2: a value held back is accepted only by the new "Accept the
+  held index" action, bounded to the value shown plus what the home may draw
+  since (another value is held again); a save of the configuration accepts
+  nothing; the held index also shows in the "unreachable" status; both
+  tariffs lower is always a drop for the guard, and the tariff reference is
+  never cleared by a save (a stuck register: delete and create the device
+  again); a secondary page failing while the meter fails is not counted.
 
 [Unreleased]: https://github.com/LM1LC3N7/gladys-p1-monitor/commits/main

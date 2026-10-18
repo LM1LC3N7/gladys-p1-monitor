@@ -13,9 +13,13 @@
 // - a drop and a jump up are NEVER confirmed by repetition nor by time: they
 //   are held (the last accepted value is sent again), shown in the status,
 //   kept in /data across restarts, and taken only on an explicit gesture of
-//   the user (`acceptHeld`, a save of the configuration). A drop taken gives
-//   the core a negative delta (nothing billed), and the values after it rise
-//   from there normally; a jump taken is counted once as consumption;
+//   the user (`acceptHeld`, the "Accept the held index" action);
+// - the acceptance is BOUNDED: it covers the value shown (`held.to`, read at
+//   `held.at`) and what the home may have drawn since (INDEX_MAX_KW ×
+//   hours + INDEX_SLACK_KWH), nothing else: a jump taken is counted once as
+//   consumption, a drop taken gives the core a negative delta (nothing
+//   billed) and the values rise from there. A value outside the bounds is
+//   held again and the acceptance dropped;
 // - while a jump is held, every value at or above it stays held: the margin
 //   growing while nothing is published must never cover it;
 // - a value back to the usual rule (the drop or the jump was a glitch) ends
@@ -30,12 +34,12 @@ import { INDEX_MAX_KW, INDEX_SLACK_KWH } from './constants.js';
 
 const HOUR = 3_600_000;
 
+/** kWh a home may draw between `from` and `to` (ms): the margin of the guard. */
+const margin = (from, to) => (INDEX_MAX_KW * Math.max(0, to - from)) / HOUR + INDEX_SLACK_KWH;
+
 /** Whether `value` may follow `previous` (both `{ value, at }`). */
 function follows(previous, value, at) {
-  const hours = Math.max(0, at - previous.at) / HOUR;
-  return (
-    value >= previous.value && value - previous.value <= INDEX_MAX_KW * hours + INDEX_SLACK_KWH
-  );
+  return value >= previous.value && value - previous.value <= margin(previous.at, at);
 }
 
 const validLast = (last) =>
@@ -46,8 +50,14 @@ const validLast = (last) =>
 const validHeld = (held) =>
   held &&
   (held.direction === 'up' || held.direction === 'down') &&
-  [held.from, held.to, held.threshold].every(Number.isFinite)
-    ? { direction: held.direction, from: held.from, to: held.to, threshold: held.threshold }
+  [held.from, held.to, held.threshold, held.at].every(Number.isFinite)
+    ? {
+        direction: held.direction,
+        from: held.from,
+        to: held.to,
+        threshold: held.threshold,
+        at: held.at,
+      }
     : undefined;
 
 const isCounter = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -55,25 +65,33 @@ const isCounter = (value) => typeof value === 'number' && Number.isFinite(value)
 /**
  * The consumption index of a reading, low + high, or undefined when it must
  * not reach the guard at all:
- * - a tariff missing, not a finite number, or below 0;
- * - the sum at 0;
- * - against `previous` (the tariffs of the last index accepted): a tariff
- *   that was above 0 and reads 0, or a tariff lower while the other is not
- *   (one register glitching). Both lower is a real drop: the guard holds it.
+ * - a tariff missing, not a finite number, or below 0; the sum not finite
+ *   or at 0;
+ * - against `previous` (the tariffs of the last index accepted), both
+ *   tariffs lower is a real drop (another meter, a reset): the sum goes to
+ *   the guard, which holds it. Otherwise a tariff that was above 0 and reads
+ *   0, or a tariff lower while the other is not, is one register glitching:
+ *   no index for that reading.
  */
 export function indexOfTariffs(low, high, previous) {
-  if (!isCounter(low) || !isCounter(high) || low + high <= 0) {
+  const sum = low + high;
+  if (!isCounter(low) || !isCounter(high) || !Number.isFinite(sum) || sum <= 0) {
     return undefined;
   }
   if (previous && isCounter(previous.low) && isCounter(previous.high)) {
+    const lowDown = low < previous.low;
+    const highDown = high < previous.high;
+    if (lowDown && highDown) {
+      return sum;
+    }
     if ((previous.low > 0 && low === 0) || (previous.high > 0 && high === 0)) {
       return undefined;
     }
-    if (low < previous.low !== high < previous.high) {
+    if (lowDown || highDown) {
       return undefined;
     }
   }
-  return low + high;
+  return sum;
 }
 
 export class IndexGuard {
@@ -94,23 +112,38 @@ export class IndexGuard {
     }
     /**
      * A value held back until the user accepts it:
-     * `{ direction: 'up' | 'down', from, to, threshold }`. For a jump up,
-     * every value at or above `threshold` stays held whatever the time.
+     * `{ direction: 'up' | 'down', from, to, threshold, at }`, `to` the last
+     * value held, read at `at`. For a jump up, every value at or above
+     * `threshold` stays held whatever the time.
      */
     this.held = this.last ? validHeld(saved?.held) : undefined;
-    this.heldAccepted = false;
+    /** The acceptance of the user: `{ direction, to, at }`, the value shown then. */
+    this.accepted = undefined;
   }
 
-  /** What /data keeps: the reference and the value held. */
+  /** What /data keeps: the reference and the value held (never an acceptance). */
   state() {
     return { last: this.last ?? null, held: this.held ?? null };
   }
 
-  /** The user accepts the value held (a save of the configuration). */
+  /**
+   * The user accepts the value held, as shown now. Returns what will be
+   * counted (`{ direction, from, to }`), or undefined when nothing is held.
+   */
   acceptHeld() {
-    if (this.held) {
-      this.heldAccepted = true;
+    if (!this.held) {
+      return undefined;
     }
+    const { direction, from, to, at } = this.held;
+    this.accepted = { direction, to, at };
+    return { direction, from, to };
+  }
+
+  /** Whether `value` is within the acceptance: the value shown, plus the margin since. */
+  withinAccepted(value, at) {
+    const { direction, to, at: since } = this.accepted;
+    const top = to + margin(since, at);
+    return direction === 'up' ? value >= to && value <= top : value <= top;
   }
 
   /** Whether `value`, read at `at`, may be published. A published value becomes the reference. */
@@ -126,37 +159,36 @@ export class IndexGuard {
       this.release();
       return true;
     }
-    const up = this.held?.direction === 'up';
-    if (up && value >= this.held.threshold) {
-      if (this.heldAccepted) {
+    if (this.accepted) {
+      if (this.withinAccepted(value, at)) {
         return this.take(value, at);
       }
+      // Not what the user accepted: held again, the acceptance dropped.
+      this.accepted = undefined;
+    }
+    const up = this.held?.direction === 'up';
+    if (up && value >= this.held.threshold) {
       // Held, however long ago the last value was published.
-      this.held = { ...this.held, to: value };
+      this.held = { ...this.held, to: value, at };
       return false;
     }
     if (follows(this.last, value, at)) {
       return this.take(value, at);
     }
     const direction = value > this.last.value ? 'up' : 'down';
-    if (this.heldAccepted && this.held?.direction === direction) {
-      return this.take(value, at);
-    }
-    if (this.held?.direction !== direction) {
-      this.heldAccepted = false;
-    }
     this.held = {
       direction,
       from: this.last.value,
       to: value,
       threshold: direction === 'up' && up ? Math.min(value, this.held.threshold) : value,
+      at,
     };
     return false;
   }
 
   release() {
     this.held = undefined;
-    this.heldAccepted = false;
+    this.accepted = undefined;
   }
 
   take(value, at) {

@@ -129,7 +129,8 @@ export class P1MonitorApp {
 
   /**
    * `fresh`: the user saved the form (not a reconnection): the retry delays
-   * end, and a consumption index held back is accepted.
+   * end. It accepts nothing: a value held back is only taken by its own
+   * action (`acceptHeldIndex`).
    */
   start(raw = {}, { fresh = false } = {}) {
     return this.serialize(() => this.doStart(raw, { fresh }));
@@ -174,15 +175,6 @@ export class P1MonitorApp {
       for (const page of Object.values(this.pages)) {
         page.nextAt = 0;
       }
-      // A save of the form: the tariffs are taken as they are (the guard
-      // still holds a drop or a jump of their sum), the value held is taken.
-      this.tariffRef = undefined;
-      if (this.guard?.held) {
-        this.logger.info(
-          'P1 Monitor consumption index held back: accepted by a save of the configuration',
-        );
-        this.guard.acceptHeld();
-      }
     }
     // The core keeps the connection status in memory: a restarted Gladys has
     // lost it, so it is always sent again after a (re)connection.
@@ -201,10 +193,7 @@ export class P1MonitorApp {
     const mono = this.monotonic();
     if (this.lastError && mono < this.nextTryAt) {
       // Still waiting: the failure is shown again, with the time left.
-      await this.setStatus(
-        false,
-        T.unreachable(config.address, this.lastError, this.nextTryAt - mono),
-      );
+      await this.setStatus(false, this.failureMessage(this.lastError, this.nextTryAt - mono));
     }
     // Always armed, whatever the first read gives: never a dead integration.
     this.timer = this.timers.setInterval(
@@ -349,9 +338,12 @@ export class P1MonitorApp {
     /** A start (another address, a stop) during an await: this read gives up. */
     const gone = () => client !== this.client || generation !== this.generation;
     // The secondary pages are read along with the meter: they never delay it.
-    const [result] = await Promise.allSettled([
+    // Their outcome counts only when the meter answered: with the P1 Monitor
+    // down, a page failing says nothing of its own, it is read again with the
+    // meter at the next try.
+    const [result, ...pages] = await Promise.allSettled([
       client.readMeter(),
-      ...PAGES.map((page) => this.readPage(client, page, mono, gone)),
+      ...PAGES.map((page) => this.readPage(client, page, mono)),
     ]);
     if (gone()) {
       return;
@@ -359,6 +351,9 @@ export class P1MonitorApp {
     if (result.status === 'rejected') {
       await this.failed(result.reason, mono);
       return;
+    }
+    for (const page of pages) {
+      page.value?.();
     }
     const meter = result.value;
     this.failures = 0;
@@ -386,37 +381,39 @@ export class P1MonitorApp {
   /**
    * A secondary page: its failure is logged once, shown in the status and
    * tried again after SECONDARY_RETRY; it never holds back the main values.
+   * Returns what to record (applied by doTick only when the meter answered),
+   * or undefined when the page is not due.
    */
-  async readPage(client, { name, read, every, keepOnError }, mono, gone) {
+  async readPage(client, { name, read, every, keepOnError }, mono) {
     const page = this.pages[name];
     if (mono < page.nextAt) {
-      return;
+      return undefined;
     }
     let data;
     try {
       data = await read(client);
     } catch (err) {
-      if (gone()) return;
-      page.nextAt = mono + SECONDARY_RETRY;
-      if (!keepOnError) {
-        // Live values: never shown stale.
-        page.data = undefined;
-      }
-      if (!page.failing) {
-        page.failing = true;
-        this.logger.warn(`P1 Monitor ${name} page unavailable (${err?.code ?? 'error'})`);
-      }
-      return;
+      return () => {
+        page.nextAt = mono + SECONDARY_RETRY;
+        if (!keepOnError) {
+          // Live values: never shown stale.
+          page.data = undefined;
+        }
+        if (!page.failing) {
+          page.failing = true;
+          this.logger.warn(`P1 Monitor ${name} page unavailable (${err?.code ?? 'error'})`);
+        }
+      };
     }
-    if (gone()) return;
-    page.data = data;
-    page.nextAt = data?.none ? mono + NO_WATER_RETRY : every ? mono + every : 0;
-    if (page.failing) {
-      page.failing = false;
-      this.logger.info(`P1 Monitor ${name} page back`);
-    }
+    return () => {
+      page.data = data;
+      page.nextAt = data?.none ? mono + NO_WATER_RETRY : every ? mono + every : 0;
+      if (page.failing) {
+        page.failing = false;
+        this.logger.info(`P1 Monitor ${name} page back`);
+      }
+    };
   }
-
   /** The reading is stale when its TIMESTAMP_UTC has not changed for a while (monotonic). */
   followFreshness(meter, mono) {
     if (meter.timestamp === undefined || meter.timestamp !== this.readingStamp) {
@@ -449,7 +446,23 @@ export class P1MonitorApp {
     this.lastError = err;
     // Our own words only (P1MonitorError): never a text of the device.
     this.logger.warn(`P1 Monitor read failed: ${code}${err?.status ? ` ${err.status}` : ''}`);
-    await this.setStatus(false, T.unreachable(this.config.address, err, wait));
+    await this.setStatus(false, this.failureMessage(err, wait));
+  }
+
+  /** The failure, with the index held back if any (the user must see it while waiting). */
+  failureMessage(err, wait) {
+    const held = this.currentGuard()?.held;
+    const notes = held ? [T.notes.held(held)] : [];
+    return T.unreachable(this.config.address, err, wait, notes);
+  }
+
+  /** The guard of the created device, built from Gladys and /data when needed. */
+  currentGuard() {
+    const created = this.createdDevice();
+    if (!created) {
+      return undefined;
+    }
+    return this.guardOf(created, this.externalIds().feature(FEATURE.CONSUMPTION_INDEX));
   }
 
   /** The guard of the created device, from Gladys and /data. */
@@ -546,6 +559,25 @@ export class P1MonitorApp {
   }
 
   // --- Configuration screen button --------------------------------------------------
+
+  /**
+   * The "Accept the held index" button: takes the value held as shown now
+   * (plus what the home may draw until the next read, src/guard.js), never
+   * anything else. Answers with what will be counted.
+   */
+  async acceptHeldIndex() {
+    const accepted = this.currentGuard()?.acceptHeld();
+    if (!accepted) {
+      return T.accept.nothing;
+    }
+    this.logger.info(
+      `P1 Monitor consumption index ${accepted.direction === 'down' ? 'drop' : 'jump'} accepted by the user`,
+    );
+    // Published at the next read, which comes now.
+    this.lastIndexAt = undefined;
+    this.firstRun = this.run(this.generation, () => this.tick());
+    return accepted.direction === 'down' ? T.accept.down(accepted) : T.accept.up(accepted);
+  }
 
   /** The test button: read the smart meter once. */
   async testConnection() {

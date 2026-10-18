@@ -89,25 +89,34 @@ fait Home Assistant) ; le HTTPS de P1 Monitor n'est pas utilisé.
     **jamais** acceptée toute seule, ni par le temps qui passe : elle est
     retenue, la dernière valeur acceptée est renvoyée à Gladys, et l'état de
     l'intégration l'affiche. Si les valeurs reviennent, elles reprennent
-    normalement, sans aucun kWh fictif. Si le compteur a vraiment changé,
-    **enregistrez la configuration** de l'intégration : la nouvelle valeur est
-    acceptée, rien n'est facturé pour la baisse, et la consommation repart de
-    là ;
+    normalement, sans aucun kWh fictif ;
   - un **saut vers le haut** (plus de 100 kW en moyenne depuis la dernière
     valeur acceptée) n'est **jamais** accepté tout seul, ni par répétition, ni
     par le temps qui passe, ni par un redémarrage : toute valeur égale ou
     supérieure reste retenue (la retenue est gardée dans `/data`), la
-    dernière valeur acceptée est renvoyée à Gladys, et l'état affiche le saut.
-    Si vous **enregistrez la configuration**, la différence (par exemple
-    5000 kWh) **sera comptée d'un coup comme consommation** : n'enregistrez
-    que si cette énergie a vraiment été consommée ;
+    dernière valeur acceptée est renvoyée à Gladys, et l'état affiche le saut,
+    même quand le P1 Monitor est injoignable ;
+  - pour accepter une valeur retenue, cliquez sur **Accepter l'index retenu**
+    dans la configuration de l'intégration. L'action prend **exactement la
+    valeur affichée** (plus ce que le foyer peut consommer d'ici la lecture
+    suivante) et répond avec ce qui sera compté : pour un saut, la différence
+    (par exemple 5000 kWh) **sera comptée d'un coup comme consommation**,
+    n'acceptez que si cette énergie a vraiment été consommée ; pour une
+    baisse, rien n'est facturé et la consommation repart de là. Une autre
+    valeur lue ensuite reste retenue. **Enregistrer la configuration n'accepte
+    jamais rien** ;
+  - si un registre reste bloqué (par exemple un nouveau compteur dont un tarif
+    reste à 0 alors qu'il ne l'était pas) et que l'état dit durablement « ne
+    donne pas d'index », la sortie est de **supprimer l'appareil puis de le
+    recréer** depuis l'onglet Découverte : sa référence repart de zéro ;
   - la marge de 100 kW compte depuis la dernière valeur acceptée : après une
     longue panne, elle grandit (24 h de panne laissent passer jusqu'à
     2400 kWh d'un coup). Un relevé figé (même valeur) ne déplace pas la date
     de la dernière valeur, pour que la reprise ne soit pas prise pour un
-    saut.- Les valeurs inchangées ne sont renvoyées que toutes les 10 minutes ; à
-    chaque reconnexion à Gladys, l'appareil, toutes ses valeurs et l'état sont
-    publiés à nouveau.
+    saut.
+- Les valeurs inchangées ne sont renvoyées que toutes les 10 minutes ; à
+  chaque reconnexion à Gladys, l'appareil, toutes ses valeurs et l'état sont
+  publiés à nouveau.
 - Les caractéristiques de l'appareil sont figées à sa création : si une
   valeur apparaît plus tard (premiers panneaux solaires, compteur d'eau),
   cliquez sur « Mettre à jour » dans l'onglet Découverte : les nouvelles

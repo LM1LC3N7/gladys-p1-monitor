@@ -49,8 +49,10 @@ Gladys ⇄ SDK ⇄ src/app.js (P1MonitorApp)
   reading; a drop of the sum and a jump over 100 kW on average are never
   confirmed by repetition nor by time: held (kept in
   `/data/p1-monitor-state.json` across restarts), the last accepted value
-  sent again, shown in the status, accepted only by a save of the
-  configuration (a drop then bills nothing, a jump is counted once). A value
+  sent again, shown in the status (also while unreachable), accepted only by
+  the `accept_held_index` action, bounded to the value shown plus the
+  margin since (a drop then bills nothing, a jump is counted once); a save
+  of the configuration accepts nothing. A value
   equal to the reference never moves its date (a frozen reading never
   shrinks the margin). The other counters are never published at 0.
 - **Pace**: one read every 10 s (power, phases); the indexes, tariff, gas,

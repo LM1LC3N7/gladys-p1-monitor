@@ -3,7 +3,7 @@
 // manifest keys, feature keys in src/devices.js) is forever: never rename one.
 // -----------------------------------------------------------------------------
 
-export const ACTIONS = { TEST: 'test_connection' };
+export const ACTIONS = { TEST: 'test_connection', ACCEPT_HELD: 'accept_held_index' };
 
 /**
  * The external id of the device: `p1monitor:meter`, one device per

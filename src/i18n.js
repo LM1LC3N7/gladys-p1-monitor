@@ -49,9 +49,16 @@ export const T = {
     en: 'The P1 Monitor address is not valid: enter an IP address or a host name, with an optional port (e.g. 192.168.1.40).',
     fr: 'L’adresse du P1 Monitor n’est pas valide : saisissez une adresse IP ou un nom d’hôte, avec un port éventuel (ex. 192.168.1.40).',
   },
-  unreachable: (address, err, wait) => ({
-    en: `The P1 Monitor at ${address} could not be read (${reason(err).en}): new try in ${delay(wait).en}.`,
-    fr: `Le P1 Monitor à l’adresse ${address} n’a pas pu être lu (${reason(err).fr}) : nouvel essai dans ${delay(wait).fr}.`,
+  /** `notes`: { en, fr } texts added after the failure (an index held back). */
+  unreachable: (address, err, wait, notes = []) => ({
+    en: [
+      `The P1 Monitor at ${address} could not be read (${reason(err).en}): new try in ${delay(wait).en}.`,
+      ...notes.map((n) => n.en),
+    ].join(' '),
+    fr: [
+      `Le P1 Monitor à l’adresse ${address} n’a pas pu être lu (${reason(err).fr}) : nouvel essai dans ${delay(wait).fr}.`,
+      ...notes.map((n) => n.fr),
+    ].join(' '),
   }),
   noDevice: {
     en: 'P1 Monitor found: create its device from the "Discover" tab to receive its values.',
@@ -78,16 +85,33 @@ export const T = {
     held: ({ direction, from, to }) => {
       if (direction === 'down') {
         return {
-          en: `The consumption index dropped from ${from} to ${to} kWh: held back, the last accepted value is sent again. If the meter was replaced or reset, save the configuration of the integration to accept the new value: nothing is billed for the drop, the consumption goes on from there.`,
-          fr: `L’index de consommation a baissé de ${from} à ${to} kWh : retenu, la dernière valeur acceptée est renvoyée. Si le compteur a été remplacé ou remis à zéro, enregistrez la configuration de l’intégration pour accepter la nouvelle valeur : rien n’est facturé pour la baisse, la consommation repart de là.`,
+          en: `The consumption index dropped from ${from} to ${to} kWh: held back, the last accepted value is sent again. If the meter was really replaced or reset, click "Accept the held index" in the configuration of the integration: nothing is billed for the drop, the consumption goes on from there. Saving the configuration accepts nothing.`,
+          fr: `L’index de consommation a baissé de ${from} à ${to} kWh : retenu, la dernière valeur acceptée est renvoyée. Si le compteur a vraiment été remplacé ou remis à zéro, cliquez sur « Accepter l’index retenu » dans la configuration de l’intégration : rien n’est facturé pour la baisse, la consommation repart de là. Enregistrer la configuration n’accepte rien.`,
         };
       }
       const kwh = Math.round((to - from) * 1000) / 1000;
       return {
-        en: `The consumption index jumped from ${from} to ${to} kWh: held back, not sent to the energy monitoring. If you save the configuration of the integration, ${kwh} kWh will be counted at once as consumption; save only if this energy was really consumed.`,
-        fr: `L’index de consommation a sauté de ${from} à ${to} kWh : retenu, non envoyé au suivi énergétique. Si vous enregistrez la configuration de l’intégration, ${kwh} kWh seront comptés d’un coup comme consommation ; n’enregistrez que si cette énergie a vraiment été consommée.`,
+        en: `The consumption index jumped from ${from} to ${to} kWh: held back, not sent to the energy monitoring. If you click "Accept the held index" in the configuration of the integration, ${kwh} kWh will be counted at once as consumption; accept only if this energy was really consumed. Saving the configuration accepts nothing.`,
+        fr: `L’index de consommation a sauté de ${from} à ${to} kWh : retenu, non envoyé au suivi énergétique. Si vous cliquez sur « Accepter l’index retenu » dans la configuration de l’intégration, ${kwh} kWh seront comptés d’un coup comme consommation ; n’acceptez que si cette énergie a vraiment été consommée. Enregistrer la configuration n’accepte rien.`,
       };
     },
+  },
+  accept: {
+    nothing: {
+      en: 'No consumption index is held back: nothing to accept.',
+      fr: 'Aucun index de consommation n’est retenu : rien à accepter.',
+    },
+    up: ({ from, to }) => {
+      const kwh = Math.round((to - from) * 1000) / 1000;
+      return {
+        en: `Accepted: the index ${to} kWh will be sent at the next read, and ${kwh} kWh (plus what the home uses meanwhile) will be counted at once as consumption. A different value stays held.`,
+        fr: `Accepté : l’index ${to} kWh sera envoyé à la prochaine lecture, et ${kwh} kWh (plus ce que le foyer consomme d’ici là) seront comptés d’un coup comme consommation. Une autre valeur reste retenue.`,
+      };
+    },
+    down: ({ from, to }) => ({
+      en: `Accepted: the index goes from ${from} down to ${to} kWh at the next read; 0 kWh is counted for the drop, the consumption goes on from there. A different value stays held.`,
+      fr: `Accepté : l’index passe de ${from} à ${to} kWh à la prochaine lecture ; 0 kWh est compté pour la baisse, la consommation repart de là. Une autre valeur reste retenue.`,
+    }),
   },
   test: {
     ok: (meter) => {

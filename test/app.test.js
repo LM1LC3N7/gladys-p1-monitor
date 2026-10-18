@@ -94,6 +94,7 @@ async function setup({
   gladys.onDeviceCreated((device) => app.onDeviceCreated(device));
   gladys.onDeviceUpdated((device) => app.onDeviceUpdated(device));
   gladys.onAction(ACTIONS.TEST, () => app.testConnection());
+  gladys.onAction(ACTIONS.ACCEPT_HELD, () => app.acceptHeldIndex());
   /** The next 10-second tick (or `ms` later). */
   const tick = async (ms = POWER_INTERVAL) => {
     clock.now += ms;
@@ -212,9 +213,9 @@ test('an index glitch (0, one tariff missing) never reaches Gladys', async () =>
   routes[SMARTMETER_PATH] = () =>
     json(meterWith({ CONSUMPTION_KWH_LOW: 0.001, CONSUMPTION_KWH_HIGH: 0 }));
   await tick(MINUTE);
-  // Caught by the tariff check, before the guard: no index, no hold.
-  assert.ok(!logger.lines.some((l) => /held back/.test(l)));
-  assert.match(status(gladys).message.fr, /ne donne pas d’index/);
+  // Both tariffs lower: a drop for the guard, held (never billed).
+  assert.ok(logger.lines.some((l) => /drop held back/.test(l)));
+  assert.match(status(gladys).message.fr, /a baissé de 8432.397/);
   liveMeter(routes, { CONSUMPTION_KWH_HIGH: null, CONSUMPTION_KWH_LOW: 0, CONSUMPTION_GAS_M3: 0 });
   for (let i = 0; i < 10; i += 1) {
     await tick(MINUTE);
@@ -269,14 +270,19 @@ test('a real drop is held for hours, never confirmed by time; back up, no fictiv
   assert.doesNotMatch(status(gladys).message.fr, /baissé/);
 });
 
-test('a drop accepted by a save: nothing billed, then the index rises normally', async () => {
+test('a drop accepted by its action: nothing billed, then the index rises normally', async () => {
   const routes = p1Routes();
   const { app, gladys, tick } = await setup({ routes, devices: [created()] });
   await app.start(CONFIG);
   await app.idle();
   liveMeter(routes, { CONSUMPTION_KWH_LOW: 3, CONSUMPTION_KWH_HIGH: 2 });
   await tick(MINUTE);
+  // A save of the form accepts nothing.
   await app.start(CONFIG, { fresh: true });
+  await app.idle();
+  assert.deepEqual(distinct(indexes(gladys)), [INDEX]);
+  const answer = await gladys.fake.action(ACTIONS.ACCEPT_HELD);
+  assert.match(answer.data.message.fr, /de 8432.397 à 5 kWh.*0 kWh est compté/);
   await app.idle();
   assert.equal(indexes(gladys).at(-1), 5);
   liveMeter(routes, { CONSUMPTION_KWH_LOW: 3.5, CONSUMPTION_KWH_HIGH: 2 });
@@ -299,7 +305,7 @@ test('a frozen reading for 3 hours, then +4 kWh: accepted, nothing held', async 
   assert.doesNotMatch(status(gladys).message.fr, /sauté/);
 });
 
-test('a jump up is held until the user saves the configuration, then counted once', async () => {
+test('a jump up is held until the user accepts it by its action, then counted once', async () => {
   const routes = p1Routes();
   const { app, gladys, tick } = await setup({ routes, devices: [created()] });
   await app.start(CONFIG);
@@ -312,18 +318,28 @@ test('a jump up is held until the user saves the configuration, then counted onc
   assert.deepEqual(distinct(indexes(gladys)), [INDEX]);
   assert.match(status(gladys).message.fr, /sauté de 8432.397 à 13432.397 kWh/);
   assert.match(status(gladys).message.fr, /5000 kWh seront comptés d’un coup comme consommation/);
-  assert.match(status(gladys).message.en, /save only if this energy was really consumed/);
+  assert.match(status(gladys).message.en, /accept only if this energy was really consumed/);
+  assert.match(status(gladys).message.en, /Saving the configuration accepts nothing/);
   // A simple reconnection never accepts it.
   await app.start(CONFIG);
   await app.idle();
   assert.deepEqual(distinct(indexes(gladys)), [INDEX]);
+  // Nor a save of the form.
   await app.start(CONFIG, { fresh: true });
   await app.idle();
+  assert.deepEqual(distinct(indexes(gladys)), [INDEX]);
+  const answer = await gladys.fake.action(ACTIONS.ACCEPT_HELD);
+  assert.match(answer.data.message.fr, /5000 kWh .*seront comptés d’un coup/);
+  await app.idle();
   assert.deepEqual(distinct(indexes(gladys)), [INDEX, 13432.397]);
+  assert.equal(
+    (await gladys.fake.action(ACTIONS.ACCEPT_HELD)).data.message.en,
+    'No consumption index is held back: nothing to accept.',
+  );
   assert.doesNotMatch(status(gladys).message.fr, /sauté/);
 });
 
-test('a jump held stays held across a restart, until the configuration is saved', async () => {
+test('a jump held stays held across a restart, until the user accepts it', async () => {
   const store = createMemoryStore();
   const routes = p1Routes();
   const first = await setup({ routes, devices: [created()], store });
@@ -345,7 +361,7 @@ test('a jump held stays held across a restart, until the configuration is saved'
   }
   assert.ok(!indexes(second.gladys).includes(13432.397));
   assert.match(status(second.gladys).message.fr, /sauté/);
-  await second.app.start(CONFIG, { fresh: true });
+  await second.gladys.fake.action(ACTIONS.ACCEPT_HELD);
   await second.app.idle();
   assert.equal(indexes(second.gladys).at(-1), 13432.397);
 });
@@ -592,4 +608,73 @@ test('unreachable at the start: the created device is still offered in Discovery
   assert.equal(status(gladys).connected, false);
   const keys = (d) => d.features.map((f) => f.external_id).sort();
   assert.deepEqual(keys(gladys.fake.discoveredDevices[0]), keys(device));
+});
+
+test('the held index stays in the status while the P1 Monitor is unreachable', async () => {
+  const routes = p1Routes();
+  const { app, gladys, tick } = await setup({ routes, devices: [created()] });
+  await app.start(CONFIG);
+  await app.idle();
+  liveMeter(routes, { CONSUMPTION_KWH_LOW: 10436.256 });
+  await tick(MINUTE);
+  routes[SMARTMETER_PATH] = () => {
+    throw timeoutError();
+  };
+  await tick(MINUTE);
+  assert.equal(status(gladys).connected, false);
+  assert.match(status(gladys).message.fr, /pas de réponse.*sauté de 8432.397 à 13432.397 kWh/);
+});
+
+test('an accepted jump never takes another value: held again, nothing billed', async () => {
+  const routes = p1Routes();
+  const { app, gladys, tick } = await setup({ routes, devices: [created()] });
+  await app.start(CONFIG);
+  await app.idle();
+  routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: 5441.256 }, 10));
+  await tick(MINUTE);
+  assert.match(status(gladys).message.fr, /sauté de 8432.397 à 8437.397 kWh/);
+  // Meanwhile the meter says 5000 kWh more: the user accepts what was shown.
+  routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: 10441.256 }, 20));
+  await gladys.fake.action(ACTIONS.ACCEPT_HELD);
+  await app.idle();
+  await tick(MINUTE);
+  assert.deepEqual(distinct(indexes(gladys)), [INDEX]);
+  assert.match(status(gladys).message.fr, /sauté de 8432.397 à 13437.397 kWh/);
+});
+
+test('a register stuck at 0 (no index): deleting and creating the device again ends it', async () => {
+  const routes = p1Routes();
+  const store = createMemoryStore();
+  const { app, gladys, tick } = await setup({ routes, devices: [created()], store });
+  await app.start(CONFIG);
+  await app.idle();
+  // A new meter whose second register stays at 0, higher on the first one.
+  liveMeter(routes, { CONSUMPTION_KWH_LOW: 9000, CONSUMPTION_KWH_HIGH: 0 });
+  for (let i = 0; i < 30; i += 1) {
+    await tick(MINUTE);
+  }
+  assert.deepEqual(distinct(indexes(gladys)), [INDEX]);
+  assert.match(status(gladys).message.fr, /ne donne pas d’index/);
+  // The way out: the device deleted and created again (a new reference).
+  await gladys.fake.deviceCreated(created());
+  await app.idle();
+  assert.equal(indexes(gladys).at(-1), 9000);
+});
+
+test('a secondary page failing while the meter fails is not counted', async () => {
+  const down = () => {
+    throw timeoutError();
+  };
+  const routes = p1Routes({ [SMARTMETER_PATH]: down, '/api/v1/status': down });
+  const { app, gladys, tick, logger } = await setup({ routes, devices: [created()] });
+  await app.start(CONFIG);
+  await app.idle();
+  assert.equal(status(gladys).connected, false);
+  // Everything back at the next try: the phases read at once, nothing logged for them.
+  routes[SMARTMETER_PATH] = () => json(meterWith({}));
+  routes['/api/v1/status'] = () => json(STATUS);
+  await tick(RETRY_MIN);
+  assert.equal(gladys.fake.lastState(F('voltage_l1')), 229);
+  assert.ok(!logger.lines.some((l) => /page unavailable/.test(l)));
+  assert.doesNotMatch(status(gladys).message.fr, /Certaines pages/);
 });

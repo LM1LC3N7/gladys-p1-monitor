@@ -72,7 +72,8 @@ test/                             node --test, against the SDK's fake Gladys (in
   `power` feature; the injected power is a plain sensor.
 - **The billed index passes `IndexGuard`** (`src/guard.js`): never 0, a drop
   and a jump up never confirmed by repetition nor by time (both held),
-  only by a save of the configuration. The other counters are never
+  only by the `accept_held_index` action, bounded to the value shown (a
+  save of the configuration accepts nothing). The other counters are never
   published at 0.
 - **A secondary page never blocks the main data**: status, configuration
   and water failing keep the power and the indexes going.

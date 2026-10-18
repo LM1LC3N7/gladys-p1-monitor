@@ -53,6 +53,15 @@
         "en": "Reads the power and the consumption index of the smart meter once from the P1 Monitor at this address.",
         "fr": "Lit une fois la puissance et l'index de consommation du compteur depuis le P1 Monitor à cette adresse."
       }
+    },
+    {
+      "key": "accept_held_index",
+      "timeout_seconds": 30,
+      "label": { "en": "Accept the held index", "fr": "Accepter l'index retenu" },
+      "description": {
+        "en": "Only when the status shows a consumption index held back (a jump or a drop) and it is right: takes exactly the value shown. A jump is then counted at once as consumption; a drop bills nothing. Saving the configuration never accepts it.",
+        "fr": "Seulement quand l'état affiche un index de consommation retenu (un saut ou une baisse) et qu'il est juste : prend exactement la valeur affichée. Un saut est alors compté d'un coup comme consommation ; une baisse ne facture rien. Enregistrer la configuration ne l'accepte jamais."
+      }
     }
   ]
 }
