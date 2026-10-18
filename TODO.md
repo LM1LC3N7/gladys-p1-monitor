@@ -110,7 +110,8 @@
     gives no index (a new meter with a register staying at 0) has one way
     out, documented: delete the device and create it again (`onDeviceCreated`
     clears the guard, the tariffs and the /data entry). Tested;
-  - (b) never 0;
+  - (b) never 0; the model's `sum` (`src/p1monitor/model.js`) also requires
+    `Number.isFinite(low + high)` (approval, n3);
   - (c) a value plausible after the reference (not lower, at most 100 kW on
     average + 0.5 kWh) goes through; a value EQUAL to the reference goes
     through without moving its date (review I1: a frozen reading never
@@ -130,7 +131,9 @@ threshold, at }`, `at` the time `to` was read), never confirmed by
     R1): a jump is taken only for `held.to ≤ v ≤ held.to + 100 kW × (at −
 held.at) + 0.5 kWh`, a drop only for `v ≤ held.to + margin`; any other
     value is held again and the acceptance dropped. An acceptance is not
-    kept in /data (a restart asks again). A drop taken bills nothing
+    kept in /data (a restart asks again). A value held read back from /data
+    is dated at its loading (`held.at` = load time, approval n1), never its
+    old date, which would widen the range an acceptance takes. A drop taken bills nothing
     (negative delta), the values rise from there; a jump taken is counted
     once;
   - (f) the guard starts again at `onDeviceCreated` (its /data entry
@@ -142,7 +145,8 @@ held.at) + 0.5 kWh`, a drop only for `v ≤ held.to + margin`; any other
 - **Secondary pages and the meter** (round 2, m4): the outcome of a
   secondary page counts only when the meter answered; with the P1 Monitor
   down, a page failing is neither logged nor delayed, it is read again with
-  the meter.- **Frozen reading**: P1 Monitor keeps serving its last reading when the P1
+  the meter.
+- **Frozen reading**: P1 Monitor keeps serving its last reading when the P1
   cable is out. The `TIMESTAMP_UTC` unchanged for 5 minutes (measured on our
   clock, so no clock skew) stops the power and the phases, with a status
   note; the indexes are still published (unchanged, so no delta).
@@ -240,6 +244,21 @@ threshold } }` as `held = { direction: 'up', from, to, threshold, at }`
   both P1 tariffs lower is a drop; a save of the form accepts nothing; the
   held note in the unreachable status; the old /data state migrated; the
   manifest test lists both actions.
+- **Additions of the approval**:
+  1. the key of `saveGuard` (youless `src/app.js`, around line 440) is built
+     from `held` (direction, from, threshold) and the tariffs, no longer
+     from `jump`;
+  2. the held note appears in EVERY not-connected status, not only
+     "unreachable": also "password refused" (`T.auth`) and "password asked"
+     (`T.protected`), and the downgrade message;
+  3. `doStart`, when the address or the password changes, also resets the
+     tariff reference (`tariffRef = undefined`, another device);
+  4. n1 applies to ANY value held read back from /data (new shape and the
+     migrated `{ jump }`): `held.at` = the load time, passed to the
+     `IndexGuard` constructor;
+  5. a migration test with an old state whose `last.at` is several days old:
+     the jump stays held, an acceptance followed by a value far above the
+     jump shown is held again (the old date never widens the range).
 - Then the usual definition of done, and a patch release.
 
 ## Ideas

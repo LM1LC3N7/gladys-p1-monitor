@@ -62,5 +62,8 @@ the notes of the version's GitHub Release.
   tariffs lower is always a drop for the guard, and the tariff reference is
   never cleared by a save (a stuck register: delete and create the device
   again); a secondary page failing while the meter fails is not counted.
+- Approval: a value held read back from `/data` after a restart is dated at
+  its loading, so an old date never widens what an acceptance takes; the
+  sums of tariffs require a finite total.
 
 [Unreleased]: https://github.com/LM1LC3N7/gladys-p1-monitor/commits/main

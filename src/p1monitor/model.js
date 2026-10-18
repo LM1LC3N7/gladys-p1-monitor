@@ -44,8 +44,11 @@ const counter = (value) => {
 };
 
 /** The sum of two tariffs, only when both are there and it is above 0. */
+/** The sum of two tariffs: both finite, the sum finite and above 0, else undefined. */
 const sum = (low, high) =>
-  Number.isFinite(low) && Number.isFinite(high) && low + high > 0 ? low + high : undefined;
+  Number.isFinite(low) && Number.isFinite(high) && Number.isFinite(low + high) && low + high > 0
+    ? low + high
+    : undefined;
 
 /** A power in W, between 0 and POWER_MAX: anything else is a glitch, undefined. */
 const power = (value) =>

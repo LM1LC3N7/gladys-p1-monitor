@@ -98,9 +98,11 @@ export class IndexGuard {
   /**
    * `last`: the value Gladys already holds (`{ value, at }`), when known.
    * `saved`: the state kept in /data (`state()`), so that a value held back
-   * stays held across a restart.
+   * stays held across a restart. `loadedAt`: when it is loaded; a value held
+   * read back from /data is dated then (its old date would widen the range
+   * an acceptance takes).
    */
-  constructor(last, saved) {
+  constructor(last, saved, loadedAt) {
     const kept = validLast(saved?.last);
     const known = validLast(last);
     if (kept && known && kept.value === known.value) {
@@ -116,7 +118,8 @@ export class IndexGuard {
      * value held, read at `at`. For a jump up, every value at or above
      * `threshold` stays held whatever the time.
      */
-    this.held = this.last ? validHeld(saved?.held) : undefined;
+    const keptHeld = this.last ? validHeld(saved?.held) : undefined;
+    this.held = keptHeld && Number.isFinite(loadedAt) ? { ...keptHeld, at: loadedAt } : keptHeld;
     /** The acceptance of the user: `{ direction, to, at }`, the value shown then. */
     this.accepted = undefined;
   }

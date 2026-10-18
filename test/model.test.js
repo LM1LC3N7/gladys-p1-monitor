@@ -497,6 +497,22 @@ test('index guard: an acceptance is bounded to the value shown and the margin si
   assert.equal(drop.accept(10.2, 4 * MINUTE), true);
   assert.equal(new IndexGuard({ value: 1, at: 0 }).acceptHeld(), undefined, 'nothing held');
 });
+test('index guard: a value held read back from /data is dated at its loading', () => {
+  const DAY = 24 * 60 * MINUTE;
+  const saved = {
+    last: { value: 1000, at: 0 },
+    held: { direction: 'up', from: 1000, to: 1005, threshold: 1005, at: 0 },
+  };
+  // Loaded 5 days later: an acceptance covers 1005 plus the margin since the load only.
+  const guard = new IndexGuard(undefined, saved, 5 * DAY);
+  assert.equal(guard.held.at, 5 * DAY);
+  guard.acceptHeld();
+  assert.equal(guard.accept(5000, 5 * DAY + MINUTE), false, 'the old date never widens it');
+  assert.equal(guard.held.to, 5000);
+  const fair = new IndexGuard(undefined, saved, 5 * DAY);
+  fair.acceptHeld();
+  assert.equal(fair.accept(1005.5, 5 * DAY + MINUTE), true);
+});
 test('index of the tariffs: both there; a register at 0 or dropping alone is no index', () => {
   assert.equal(indexOfTariffs(5000, 3000), 8000);
   assert.equal(indexOfTariffs(5000, 0), 5000, 'a single-tariff meter, no reference yet');

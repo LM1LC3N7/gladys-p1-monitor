@@ -469,7 +469,7 @@ export class P1MonitorApp {
   guardOf(created, indexId) {
     if (!this.guard) {
       const saved = this.store.load()[indexId];
-      this.guard = new IndexGuard(lastValueOf(created, indexId), saved);
+      this.guard = new IndexGuard(lastValueOf(created, indexId), saved, this.now());
       this.tariffRef = validTariffs(saved?.tariffs);
     }
     return this.guard;
