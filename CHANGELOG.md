@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-18
+
 ### Added
 
 - Local reading of P1 Monitor (ztatz) through its REST API, as the p1monitor
@@ -66,4 +68,5 @@ the notes of the version's GitHub Release.
   its loading, so an old date never widens what an acceptance takes; the
   sums of tariffs require a finite total.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-p1-monitor/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-p1-monitor/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-p1-monitor/releases/tag/v0.1.1
