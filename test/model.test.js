@@ -15,7 +15,6 @@ import {
   DEVICE_FEATURE_UNITS as U,
 } from '@gladysassistant/integration-sdk';
 import { normalizeConfig, parseAddress } from '../src/config.js';
-import { INDEX_DROP_CONFIRM } from '../src/constants.js';
 import {
   FEATURE,
   buildDevice,
@@ -24,7 +23,7 @@ import {
   indexStates,
   liveStates,
 } from '../src/devices.js';
-import { IndexGuard } from '../src/guard.js';
+import { IndexGuard, indexOfTariffs } from '../src/guard.js';
 import { createFileStore } from '../src/store.js';
 import {
   bringsNew,
@@ -194,7 +193,7 @@ const fullCaps = () =>
 test('the device: one index in the energy monitoring, everything else plain or volume', () => {
   const gladys = createFakeGladys({ selector: 'p1-monitor' });
   const built = buildDevice(gladys, fullCaps(), '192.168.1.40');
-  assert.equal(built.external_id, 'ext:p1-monitor:p1monitor:host-192.168.1.40');
+  assert.equal(built.external_id, 'ext:p1-monitor:p1monitor:meter');
   const byKey = Object.fromEntries(built.features.map((f) => [key(f), f]));
   // The only energy index: the consumption (low + high).
   assert.deepEqual(
@@ -284,17 +283,32 @@ test('a created device gives back its capabilities (the published one never shri
   assert.deepEqual(again.features.map(key), built.features.map(key));
 });
 
-test('the address is the id, with its port', () => {
+test('one device per integration, whatever the address', () => {
   const gladys = createFakeGladys({ selector: 'p1-monitor' });
-  assert.equal(
-    ids(gladys, '192.168.1.40:8080').device,
-    'ext:p1-monitor:p1monitor:host-192.168.1.40-8080',
-  );
+  assert.equal(ids(gladys).device, 'ext:p1-monitor:p1monitor:meter');
+  const built = buildDevice(gladys, { power: true }, '192.168.1.41:8080');
+  assert.equal(built.external_id, 'ext:p1-monitor:p1monitor:meter');
+  assert.deepEqual(built.params, [{ name: 'address', value: '192.168.1.41:8080' }]);
+});
+
+test('a power above 100 kW is a glitch: undefined, per phase too', () => {
+  const meter = parseSmartmeter(meterWith({ CONSUMPTION_W: 100_001, PRODUCTION_W: 250_000 }));
+  assert.equal(meter.power, undefined);
+  assert.equal(meter.injectionPower, undefined);
+  assert.equal(parseSmartmeter(meterWith({ CONSUMPTION_W: 100_000 })).power, 100_000);
+  const phases = parsePhases([
+    { STATUS_ID: 74, STATUS: '100.5' },
+    { STATUS_ID: 77, STATUS: '250' },
+    { STATUS_ID: 103, STATUS: '230' },
+  ]).phases;
+  assert.equal(phases[0].powerConsumed, undefined);
+  assert.equal(phases[0].powerProduced, undefined);
+  assert.equal(phases[0].voltage, 230);
 });
 
 test('states: live values and indexes apart, rounded, counters never 0', () => {
   const gladys = createFakeGladys({ selector: 'p1-monitor' });
-  const external = ids(gladys, 'x');
+  const external = ids(gladys);
   const meter = parseSmartmeter(SMARTMETER);
   const phases = parsePhases(STATUS_3P).phases;
   const live = liveStates(external, meter, phases);
@@ -334,7 +348,7 @@ test('states: live values and indexes apart, rounded, counters never 0', () => {
   assert.ok(keys.includes('price_injection_low'));
 });
 
-// --- The index guard (shared with gladys-youless) --------------------------------------
+// --- The index guard -------------------------------------------------------------------
 
 test('index guard: never 0, a normal rise goes through', () => {
   const guard = new IndexGuard();
@@ -355,14 +369,15 @@ test('index guard: a jump up is never confirmed by repetition, only by the user'
   for (let i = 1; i <= 500; i += 1) {
     assert.equal(guard.accept(6000 + i * 0.01, i * MINUTE), false);
   }
-  assert.deepEqual(guard.jump, { from: 1000, to: 6005, threshold: 6000.01 });
-  guard.acceptJump();
+  assert.deepEqual(guard.held, { direction: 'up', from: 1000, to: 6005, threshold: 6000.01 });
+  guard.acceptHeld();
   assert.equal(guard.accept(6005.01, 501 * MINUTE), true);
-  assert.equal(guard.jump, undefined);
+  assert.equal(guard.held, undefined);
   const back = new IndexGuard({ value: 1000, at: 0 });
   back.accept(9000, MINUTE);
   assert.equal(back.accept(1000.1, 2 * MINUTE), true);
-  back.acceptJump();
+  assert.equal(back.held, undefined);
+  back.acceptHeld();
   assert.equal(back.accept(9000, 3 * MINUTE), false, 'an old acceptance never covers a new jump');
 });
 
@@ -370,29 +385,96 @@ test('index guard: a held jump is never covered by the margin growing over time'
   const guard = new IndexGuard({ value: 2.5, at: 0 });
   assert.equal(guard.accept(12345, MINUTE), false);
   assert.equal(guard.accept(12345.5, 200 * 60 * MINUTE), false);
-  assert.deepEqual(guard.jump, { from: 2.5, to: 12345.5, threshold: 12345 });
+  assert.deepEqual(guard.held, { direction: 'up', from: 2.5, to: 12345.5, threshold: 12345 });
   assert.equal(guard.accept(2.6, 200 * 60 * MINUTE + MINUTE), true);
 });
 
-test('index guard: a drop needs non-zero, non-decreasing values over the confirmation time', () => {
-  const replaced = new IndexGuard({ value: 50_000, at: 0 });
-  const minutes = INDEX_DROP_CONFIRM / MINUTE;
-  for (let i = 1; i <= minutes; i += 1) {
-    assert.equal(replaced.accept(10 + i * 0.01, i * MINUTE), false, `minute ${i}`);
+test('index guard: a drop is never confirmed by time; back up, nothing fictive is billed', () => {
+  const guard = new IndexGuard({ value: 50_000, at: 0 });
+  // A drop to 10 kWh, for a week: held all along.
+  for (let i = 1; i <= 7 * 24 * 60; i += 60) {
+    assert.equal(guard.accept(10 + i * 0.0001, i * MINUTE), false, `minute ${i}`);
   }
-  assert.equal(replaced.accept(10 + (minutes + 1) * 0.01, (minutes + 1) * MINUTE), true);
+  assert.equal(guard.held.direction, 'down');
+  assert.deepEqual(guard.last, { value: 50_000, at: 0 });
+  // Back to the real value: it goes through, the hold ends; the reference
+  // never went down, so no rise of 50,000 kWh is ever billed.
+  assert.equal(guard.accept(50_001, 7 * 24 * 60 * MINUTE + MINUTE), true);
+  assert.equal(guard.held, undefined);
 });
 
-test('index guard: its state survives a restart, the most recent reference wins', () => {
+test('index guard: a drop accepted by the user, then the values rise normally', () => {
+  const guard = new IndexGuard({ value: 50_000, at: 0 });
+  assert.equal(guard.accept(10, MINUTE), false);
+  guard.acceptHeld();
+  // The core skips the negative delta: nothing billed.
+  assert.equal(guard.accept(10.01, 2 * MINUTE), true);
+  assert.deepEqual(guard.last, { value: 10.01, at: 2 * MINUTE });
+  assert.equal(guard.accept(10.5, 3 * MINUTE), true);
+  // Back to the old value after the acceptance: a jump, held.
+  assert.equal(guard.accept(50_000, 4 * MINUTE), false);
+  assert.equal(guard.held.direction, 'up');
+});
+
+test('index guard: an acceptance of a drop never takes a jump', () => {
+  const guard = new IndexGuard({ value: 1000, at: 0 });
+  guard.accept(10, MINUTE);
+  guard.acceptHeld();
+  assert.equal(guard.accept(90_000, 2 * MINUTE), false);
+  assert.equal(guard.held.direction, 'up');
+  assert.equal(guard.accept(90_000, 3 * MINUTE), false);
+});
+
+test('index guard: a frozen reading never shrinks the margin of the next rise', () => {
+  const guard = new IndexGuard({ value: 1000, at: 0 });
+  // 3 hours of the same value, read every minute.
+  for (let i = 1; i <= 180; i += 1) {
+    assert.equal(guard.accept(1000, i * MINUTE), true);
+  }
+  assert.deepEqual(guard.last, { value: 1000, at: 0 }, 'the date of the value is kept');
+  // +4 kWh after 3 hours: 1.3 kW on average, plausible.
+  assert.equal(guard.accept(1004, 181 * MINUTE), true);
+  assert.equal(guard.held, undefined);
+});
+
+test('index guard: its state survives a restart; same value, the oldest date', () => {
   const guard = new IndexGuard({ value: 1000, at: 0 });
   guard.accept(1050, MINUTE);
   const saved = JSON.parse(JSON.stringify(guard.state()));
   const again = new IndexGuard({ value: 900, at: -1000 * MINUTE }, saved);
   assert.deepEqual(again.last, { value: 1000, at: 0 });
   assert.equal(again.accept(1050.1, 60 * MINUTE), false, 'still held after the restart');
-  again.acceptJump();
+  again.acceptHeld();
   assert.equal(again.accept(1050.2, 61 * MINUTE), true);
+  // A newer value in Gladys than in /data wins; the same value keeps its oldest date.
   assert.deepEqual(new IndexGuard({ value: 1100, at: 5 }, saved).last, { value: 1100, at: 5 });
+  assert.deepEqual(new IndexGuard({ value: 1000, at: 50 }, saved).last, { value: 1000, at: 0 });
+  assert.deepEqual(
+    new IndexGuard({ value: 1000, at: -50 }, { last: { value: 1000, at: 10 } }).last,
+    { value: 1000, at: -50 },
+  );
+});
+
+test('index of the tariffs: both there; a register at 0 or dropping alone is no index', () => {
+  assert.equal(indexOfTariffs(5000, 3000), 8000);
+  assert.equal(indexOfTariffs(5000, 0), 5000, 'a single-tariff meter, no reference yet');
+  for (const [low, high] of [
+    [undefined, 3000],
+    [5000, null],
+    [NaN, 3000],
+    [Infinity, 1],
+    [-1, 3000],
+    [0, 0],
+  ]) {
+    assert.equal(indexOfTariffs(low, high), undefined, `${low} ${high}`);
+  }
+  const ref = { low: 5000, high: 3000 };
+  assert.equal(indexOfTariffs(5000.1, 3000, ref), 8000.1);
+  assert.equal(indexOfTariffs(0, 3000.1, ref), undefined, 'a tariff above 0 falls to 0');
+  assert.equal(indexOfTariffs(4000, 3000.1, ref), undefined, 'one tariff drops alone');
+  assert.equal(indexOfTariffs(5000, 2999, ref), undefined, 'one tariff drops alone');
+  assert.equal(indexOfTariffs(10, 5, ref), 15, 'both drop: a real drop, for the guard');
+  assert.equal(indexOfTariffs(5000.1, 0, { low: 5000, high: 0 }), 5000.1, 'single tariff');
 });
 
 // --- Configuration and store ---------------------------------------------------------

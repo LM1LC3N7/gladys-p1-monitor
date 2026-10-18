@@ -1,9 +1,10 @@
 // -----------------------------------------------------------------------------
 // The Gladys device of a P1 Monitor and its states. Pure.
 //
-// External id (forever): p1monitor:host-<address>. The API gives no serial
-// number the p1monitor library reads, so the device is known by the address
-// the user typed: the docs ask for a fixed address.
+// External id (forever): p1monitor:meter, one device per integration. The API
+// gives no serial number the p1monitor library reads, and an address would
+// change with the router: a new address of the same P1 Monitor keeps the device
+// and its history (the index guard holds a different meter's values).
 //
 // Energy rules of the Gladys core (server/utils/constants.js and the
 // energy-monitoring service):
@@ -31,7 +32,7 @@ import {
   DEVICE_FEATURE_TYPES as T,
   DEVICE_FEATURE_UNITS as U,
 } from '@gladysassistant/integration-sdk';
-import { EXTERNAL_ID_TYPE, PRICE_MAX } from './constants.js';
+import { EXTERNAL_ID_TYPE, PLATFORM_ID, POWER_MAX, PRICE_MAX } from './constants.js';
 import { NO_CAPABILITIES } from './p1monitor/model.js';
 
 /** Feature keys (forever). */
@@ -58,10 +59,8 @@ export const FEATURE = {
   phaseCurrent: (n) => `current_l${n}`,
 };
 
-/** The platform id: the address typed by the user (a fixed one, the docs say). */
-export const platformId = (address) => `host-${String(address).replace(/[^a-z0-9.-]/gi, '-')}`;
-
-export const ids = (gladys, address) => gladys.externalIds(EXTERNAL_ID_TYPE, platformId(address));
+/** The external ids of the one device of the integration. */
+export const ids = (gladys) => gladys.externalIds(EXTERNAL_ID_TYPE, PLATFORM_ID);
 
 const feature = (external, key, name, category, type, extra = {}) => ({
   name,
@@ -89,7 +88,7 @@ const price = (external, key, name) =>
  * capabilitiesOf). The features are fixed when the user creates it.
  */
 export function buildDevice(gladys, capabilities, address) {
-  const external = ids(gladys, address);
+  const external = ids(gladys);
   const caps = { ...NO_CAPABILITIES, ...capabilities };
   const features = [];
   if (caps.power) {
@@ -102,7 +101,7 @@ export function buildDevice(gladys, capabilities, address) {
         T.ENERGY_SENSOR.POWER,
         {
           unit: U.WATT,
-          max: 100_000,
+          max: POWER_MAX,
         },
       ),
     );
@@ -124,7 +123,7 @@ export function buildDevice(gladys, capabilities, address) {
   if (caps.injection) {
     features.push(
       plain(external, FEATURE.INJECTION_POWER, 'Power injected into the grid (W)', {
-        max: 100_000,
+        max: POWER_MAX,
       }),
       plain(external, FEATURE.INJECTION_INDEX, 'Injection index (kWh)'),
       plain(external, FEATURE.INJECTION_LOW, 'Injection index, low tariff (kWh)'),
@@ -147,14 +146,14 @@ export function buildDevice(gladys, capabilities, address) {
     // A value every 10 s: no history unless the user turns it on.
     features.push(
       plain(external, FEATURE.phasePower(n), `Power taken L${n} (W)`, {
-        max: 100_000,
+        max: POWER_MAX,
         keep_history: false,
       }),
     );
     if (caps.injection) {
       features.push(
         plain(external, FEATURE.phaseInjection(n), `Power injected L${n} (W)`, {
-          max: 100_000,
+          max: POWER_MAX,
           keep_history: false,
         }),
       );

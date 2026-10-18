@@ -7,6 +7,10 @@
 //
 // The created devices are read from `gladys.devices`, which the SDK keeps up
 // to date (connection, creation, update, deletion): never a copy of our own.
+//
+// Two clocks: `now` (wall clock) dates the index for the guard and for
+// Gladys; `monotonic` paces the reads, retries and intervals, so that a wall
+// clock set back never stops them.
 // -----------------------------------------------------------------------------
 
 import { createLogger } from '@gladysassistant/integration-sdk';
@@ -33,7 +37,7 @@ import {
   liveStates,
   round,
 } from './devices.js';
-import { IndexGuard } from './guard.js';
+import { IndexGuard, indexOfTariffs } from './guard.js';
 import { createFileStore } from './store.js';
 import { T } from './i18n.js';
 import { P1MonitorClient } from './p1monitor/client.js';
@@ -41,7 +45,7 @@ import { bringsNew, capabilitiesOf, mergeCapabilities } from './p1monitor/model.
 
 const defaultTimers = { setTimeout, clearTimeout, setInterval, clearInterval };
 
-/** The secondary pages, in the order they are read; `every`: 0 for each read. */
+/** The secondary pages; `every`: 0 for each read. */
 const PAGES = [
   { name: 'phases', read: (client) => client.readPhases(), every: 0, keepOnError: false },
   {
@@ -69,21 +73,29 @@ function lastValueOf(device, featureId) {
     : undefined;
 }
 
+/** The tariffs kept in /data with the guard: `{ low, high }` of the last index accepted. */
+const validTariffs = (tariffs) =>
+  tariffs && Number.isFinite(tariffs.low) && Number.isFinite(tariffs.high)
+    ? { low: tariffs.low, high: tariffs.high }
+    : undefined;
+
 export class P1MonitorApp {
   constructor({
     gladys,
     logger = createLogger({ name: 'p1-monitor' }),
     now = Date.now,
+    monotonic = () => performance.now(),
     timers = defaultTimers,
     clientFactory = (options) => new P1MonitorClient(options),
     store = createFileStore(),
   }) {
     this.gladys = gladys;
-    /** /data: the index reference and the jump held, across restarts. */
+    /** /data: the index reference, the value held and the tariffs, across restarts. */
     this.store = store;
     this.savedGuard = undefined;
     this.logger = logger;
     this.now = now;
+    this.monotonic = monotonic;
     this.timers = timers;
     this.clientFactory = clientFactory;
     this.config = normalizeConfig();
@@ -91,18 +103,22 @@ export class P1MonitorApp {
     /** What the P1 Monitor showed it gives, and what its created device carries: only grows. */
     this.capabilities = undefined;
     this.guard = undefined;
-    this.lastIndexAt = 0;
-    /** The last reading of the meter, and the secondary pages. */
-    this.meter = undefined;
+    /** The tariffs of the last index accepted (src/guard.js indexOfTariffs). */
+    this.tariffRef = undefined;
+    /** The last index check gave no index (a tariff missing or glitching). */
+    this.indexUndefined = false;
+    this.lastIndexAt = undefined;
     this.pages = freshPages();
-    /** Freshness of the reading: its TIMESTAMP_UTC, and when (our clock) it last changed. */
+    /** Freshness of the reading: its TIMESTAMP_UTC, and when (monotonic) it last changed. */
     this.readingStamp = undefined;
     this.freshAt = 0;
     /** Retries: kept across reconnections to Gladys, reset by a save of the form. */
     this.failures = 0;
     this.nextTryAt = 0;
+    this.lastError = undefined;
     this.timer = undefined;
     this.busy = undefined;
+    this.busyGeneration = undefined;
     this.firstRun = Promise.resolve();
     this.lastStatus = undefined;
     this.generation = 0;
@@ -113,7 +129,7 @@ export class P1MonitorApp {
 
   /**
    * `fresh`: the user saved the form (not a reconnection): the retry delays
-   * end, and a consumption index jump held back is accepted (counted once).
+   * end, and a consumption index held back is accepted.
    */
   start(raw = {}, { fresh = false } = {}) {
     return this.serialize(() => this.doStart(raw, { fresh }));
@@ -142,27 +158,30 @@ export class P1MonitorApp {
     const changed = config.address !== this.config.address;
     this.config = config;
     if (changed || !this.client) {
-      // Another P1 Monitor: nothing of the previous one is kept.
+      // Another address: its reads start again. The device (one per
+      // integration) and its index guard stay: another meter is held there.
       this.client = config.address ? this.clientFactory({ address: config.address }) : undefined;
-      this.capabilities = undefined;
-      this.guard = undefined;
-      this.meter = undefined;
       this.pages = freshPages();
       this.readingStamp = undefined;
       this.failures = 0;
       this.nextTryAt = 0;
+      this.lastError = undefined;
     }
     if (fresh) {
       this.failures = 0;
       this.nextTryAt = 0;
+      this.lastError = undefined;
       for (const page of Object.values(this.pages)) {
         page.nextAt = 0;
       }
-      if (this.guard?.jump) {
+      // A save of the form: the tariffs are taken as they are (the guard
+      // still holds a drop or a jump of their sum), the value held is taken.
+      this.tariffRef = undefined;
+      if (this.guard?.held) {
         this.logger.info(
-          'P1 Monitor consumption index jump accepted by a save of the configuration',
+          'P1 Monitor consumption index held back: accepted by a save of the configuration',
         );
-        this.guard.acceptJump();
+        this.guard.acceptHeld();
       }
     }
     // The core keeps the connection status in memory: a restarted Gladys has
@@ -173,10 +192,20 @@ export class P1MonitorApp {
       return;
     }
     // Every start (a reconnection to Gladys included) publishes everything
-    // again: a restarted Gladys has lost the discovered list.
+    // again: a restarted Gladys has lost the discovered list. Unreachable now,
+    // the created device is still offered as it is.
     this.gladys.forgetPublishedStates();
-    this.lastIndexAt = 0;
+    this.lastIndexAt = undefined;
+    this.capabilities = this.knownCapabilities();
     await this.discover();
+    const mono = this.monotonic();
+    if (this.lastError && mono < this.nextTryAt) {
+      // Still waiting: the failure is shown again, with the time left.
+      await this.setStatus(
+        false,
+        T.unreachable(config.address, this.lastError, this.nextTryAt - mono),
+      );
+    }
     // Always armed, whatever the first read gives: never a dead integration.
     this.timer = this.timers.setInterval(
       () => this.run(generation, () => this.tick()),
@@ -220,14 +249,11 @@ export class P1MonitorApp {
   // --- Devices ---------------------------------------------------------------------
 
   externalIds() {
-    return ids(this.gladys, this.config.address);
+    return ids(this.gladys);
   }
 
   /** The created Gladys device of the P1 Monitor, undefined until the user creates it. */
   createdDevice() {
-    if (!this.config.address) {
-      return undefined;
-    }
     const id = this.externalIds().device;
     return (this.gladys.devices ?? []).find((d) => d.external_id === id);
   }
@@ -241,7 +267,7 @@ export class P1MonitorApp {
   }
 
   async discover() {
-    if (!this.capabilities) {
+    if (!this.capabilities || !this.config.address) {
       return;
     }
     await this.gladys
@@ -261,10 +287,8 @@ export class P1MonitorApp {
 
   async onDeviceCreated(device) {
     if (this.config.address && device?.external_id === this.externalIds().device) {
-      // A new device: no reference of the index yet (nor a jump kept in /data
-      // for a deleted device of the same id), its values right away.
-      this.guard = undefined;
-      this.savedGuard = undefined;
+      // A new device: no reference of the index yet (nor a value held in
+      // /data for a deleted device of the same id), its values right away.
       const indexId = this.externalIds().feature(FEATURE.CONSUMPTION_INDEX);
       const kept = this.store.load();
       if (indexId in kept) {
@@ -277,7 +301,11 @@ export class P1MonitorApp {
             ),
           );
       }
-      this.lastIndexAt = 0;
+      // After the save: a read finished meanwhile must not leave its guard.
+      this.guard = undefined;
+      this.savedGuard = undefined;
+      this.tariffRef = undefined;
+      this.lastIndexAt = undefined;
       await this.run(this.generation, () => this.tick());
     }
   }
@@ -285,43 +313,58 @@ export class P1MonitorApp {
   async onDeviceUpdated(device) {
     if (this.config.address && device?.external_id === this.externalIds().device) {
       // New features (Update in Discovery): their values right away.
-      this.lastIndexAt = 0;
+      this.lastIndexAt = undefined;
       await this.run(this.generation, () => this.tick());
     }
   }
 
   // --- Reads -------------------------------------------------------------------------
 
-  /** One read; a read still running (a slow device) is never doubled. */
+  /**
+   * One read; a read still running (a slow device) is never doubled. A read
+   * of a previous start (another address) is let finish (it gives up), then
+   * this one runs.
+   */
   tick() {
-    if (!this.busy) {
-      this.busy = this.doTick().finally(() => {
-        this.busy = undefined;
-      });
+    if (this.busy) {
+      if (this.busyGeneration === this.generation) {
+        return this.busy;
+      }
+      return this.busy.then(() => this.tick());
     }
+    this.busyGeneration = this.generation;
+    this.busy = this.doTick().finally(() => {
+      this.busy = undefined;
+    });
     return this.busy;
   }
 
   async doTick() {
-    const now = this.now();
-    if (!this.client || now < this.nextTryAt) {
-      return;
-    }
+    const generation = this.generation;
     const client = this.client;
-    let meter;
-    try {
-      meter = await client.readMeter();
-    } catch (err) {
-      await this.failed(err, now);
+    const mono = this.monotonic();
+    if (!client || mono < this.nextTryAt) {
       return;
     }
+    /** A start (another address, a stop) during an await: this read gives up. */
+    const gone = () => client !== this.client || generation !== this.generation;
+    // The secondary pages are read along with the meter: they never delay it.
+    const [result] = await Promise.allSettled([
+      client.readMeter(),
+      ...PAGES.map((page) => this.readPage(client, page, mono, gone)),
+    ]);
+    if (gone()) {
+      return;
+    }
+    if (result.status === 'rejected') {
+      await this.failed(result.reason, mono);
+      return;
+    }
+    const meter = result.value;
     this.failures = 0;
     this.nextTryAt = 0;
-    this.meter = meter;
-    for (const page of PAGES) {
-      await this.readPage(client, page, now);
-    }
-    this.followFreshness(meter, now);
+    this.lastError = undefined;
+    this.followFreshness(meter, mono);
     const target = this.knownCapabilities(
       capabilitiesOf({
         meter,
@@ -333,30 +376,28 @@ export class P1MonitorApp {
     if (!this.capabilities || bringsNew(this.capabilities, target)) {
       this.capabilities = target;
       await this.discover();
+      if (gone()) return;
     }
-    await this.publish(meter, now);
-    await this.setStatus(true, this.createdDevice() ? this.okMessage(meter) : T.noDevice);
+    await this.publish(meter, mono);
+    if (gone()) return;
+    await this.setStatus(true, this.createdDevice() ? this.okMessage(meter, mono) : T.noDevice);
   }
 
   /**
    * A secondary page: its failure is logged once, shown in the status and
    * tried again after SECONDARY_RETRY; it never holds back the main values.
    */
-  async readPage(client, { name, read, every, keepOnError }, now) {
+  async readPage(client, { name, read, every, keepOnError }, mono, gone) {
     const page = this.pages[name];
-    if (now < page.nextAt) {
+    if (mono < page.nextAt) {
       return;
     }
+    let data;
     try {
-      const data = await read(client);
-      page.data = data;
-      page.nextAt = data?.none ? now + NO_WATER_RETRY : every ? now + every : 0;
-      if (page.failing) {
-        page.failing = false;
-        this.logger.info(`P1 Monitor ${name} page back`);
-      }
+      data = await read(client);
     } catch (err) {
-      page.nextAt = now + SECONDARY_RETRY;
+      if (gone()) return;
+      page.nextAt = mono + SECONDARY_RETRY;
       if (!keepOnError) {
         // Live values: never shown stale.
         page.data = undefined;
@@ -365,73 +406,99 @@ export class P1MonitorApp {
         page.failing = true;
         this.logger.warn(`P1 Monitor ${name} page unavailable (${err?.code ?? 'error'})`);
       }
+      return;
+    }
+    if (gone()) return;
+    page.data = data;
+    page.nextAt = data?.none ? mono + NO_WATER_RETRY : every ? mono + every : 0;
+    if (page.failing) {
+      page.failing = false;
+      this.logger.info(`P1 Monitor ${name} page back`);
     }
   }
 
-  /** The reading is stale when its TIMESTAMP_UTC has not changed for a while (our clock). */
-  followFreshness(meter, now) {
+  /** The reading is stale when its TIMESTAMP_UTC has not changed for a while (monotonic). */
+  followFreshness(meter, mono) {
     if (meter.timestamp === undefined || meter.timestamp !== this.readingStamp) {
       this.readingStamp = meter.timestamp;
-      this.freshAt = now;
+      this.freshAt = mono;
     }
   }
 
-  isStale(now) {
-    return this.readingStamp !== undefined && now - this.freshAt >= READING_STALE_AFTER;
+  isStale(mono) {
+    return this.readingStamp !== undefined && mono - this.freshAt >= READING_STALE_AFTER;
   }
 
-  okMessage(meter) {
+  okMessage(meter, mono) {
     const notes = [];
     const failing = PAGES.map((p) => p.name).filter((name) => this.pages[name].failing);
     if (failing.length > 0) notes.push(T.notes.pages(failing));
-    if (this.isStale(this.now())) notes.push(T.notes.stale);
-    if (this.capabilities?.consumption && meter.consumption.total === undefined) {
+    if (this.isStale(mono)) notes.push(T.notes.stale);
+    if (this.capabilities?.consumption && this.indexUndefined) {
       notes.push(T.notes.noIndex);
     }
-    if (this.guard?.jump) notes.push(T.notes.jump(this.guard.jump));
+    if (this.guard?.held) notes.push(T.notes.held(this.guard.held));
     return T.ok(this.config.address, notes);
   }
 
-  async failed(err, now) {
+  async failed(err, mono) {
     const code = err?.code ?? 'error';
     const wait = Math.min(RETRY_MIN * 2 ** this.failures, RETRY_MAX);
     this.failures += 1;
-    this.nextTryAt = now + wait;
+    this.nextTryAt = mono + wait;
+    this.lastError = err;
     // Our own words only (P1MonitorError): never a text of the device.
     this.logger.warn(`P1 Monitor read failed: ${code}${err?.status ? ` ${err.status}` : ''}`);
     await this.setStatus(false, T.unreachable(this.config.address, err, wait));
   }
 
+  /** The guard of the created device, from Gladys and /data. */
+  guardOf(created, indexId) {
+    if (!this.guard) {
+      const saved = this.store.load()[indexId];
+      this.guard = new IndexGuard(lastValueOf(created, indexId), saved);
+      this.tariffRef = validTariffs(saved?.tariffs);
+    }
+    return this.guard;
+  }
+
   /** The states of a read: the live values every time, the indexes once a minute. */
-  async publish(meter, now) {
+  async publish(meter, mono) {
     const created = this.createdDevice();
     if (!created) {
       return;
     }
     const external = this.externalIds();
     // A frozen reading (P1 cable out): its power would look live, it is not sent.
-    const states = this.isStale(now)
+    const states = this.isStale(mono)
       ? []
       : liveStates(external, meter, this.pages.phases.data?.phases ?? []);
-    if (now - this.lastIndexAt >= INDEX_INTERVAL) {
-      this.lastIndexAt = now;
+    if (this.lastIndexAt !== undefined && mono < this.lastIndexAt) {
+      // A clock set back (a monotonic clock never is): paced again from now.
+      this.lastIndexAt = undefined;
+    }
+    if (this.lastIndexAt === undefined || mono - this.lastIndexAt >= INDEX_INTERVAL) {
+      this.lastIndexAt = mono;
       const indexId = external.feature(FEATURE.CONSUMPTION_INDEX);
-      this.guard ??= new IndexGuard(lastValueOf(created, indexId), this.store.load()[indexId]);
-      // The value Gladys will hold (3 decimals) is the one the guard checks.
-      const total =
-        meter.consumption.total === undefined ? undefined : round(meter.consumption.total, 3);
-      const plausible = total !== undefined && this.guard.accept(total, now);
+      const guard = this.guardOf(created, indexId);
+      const { low, high } = meter.consumption;
+      // Both tariffs checked, then their sum as Gladys will hold it (3 decimals).
+      const sum = indexOfTariffs(low, high, this.tariffRef);
+      const total = sum === undefined ? undefined : round(sum, 3);
+      this.indexUndefined = total === undefined;
+      const plausible = total !== undefined && guard.accept(total, this.now());
+      if (plausible) {
+        this.tariffRef = { low, high };
+      }
       await this.saveGuard(indexId);
       if (total !== undefined && !plausible) {
         this.logger.warn(
-          this.guard.jump
-            ? 'P1 Monitor consumption index jump held back: save the configuration to accept it'
-            : 'P1 Monitor consumption index held back: a drop or a 0, not confirmed',
+          `P1 Monitor consumption index ${guard.held?.direction === 'down' ? 'drop' : 'jump'} held back: save the configuration to accept it`,
         );
       }
-      // While a jump is held, the last accepted value is sent again (no delta
+      // While a value is held, the last accepted one is sent again (no delta
       // for the core; the heartbeat keeps its date recent in Gladys).
-      const held = this.guard.jump ? this.guard.last?.value : undefined;
+      const held = guard.held ? guard.last?.value : undefined;
       states.push(
         ...indexStates(
           external,
@@ -453,12 +520,17 @@ export class P1MonitorApp {
       .catch((err) => this.logger.warn(`Publishing the P1 Monitor values failed: ${err.message}`));
   }
 
-  /** Keeps the guard in /data when its reference or its held jump changed. */
+  /** Keeps the guard in /data when its reference, its value held or the tariffs changed. */
   async saveGuard(indexId) {
-    const state = this.guard.state();
+    const state = { ...this.guard.state(), tariffs: this.tariffRef ?? null };
     const key = JSON.stringify([
       state.last,
-      state.jump && { from: state.jump.from, threshold: state.jump.threshold },
+      state.held && {
+        direction: state.held.direction,
+        from: state.held.from,
+        threshold: state.held.threshold,
+      },
+      state.tariffs,
     ]);
     if (key === this.savedGuard) {
       return;

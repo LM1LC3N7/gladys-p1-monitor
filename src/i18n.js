@@ -75,10 +75,19 @@ export const T = {
       en: 'The meter gives no index right now: the consumption index waits for it.',
       fr: 'Le compteur ne donne pas d’index en ce moment : l’index de consommation l’attend.',
     },
-    jump: ({ from, to }) => ({
-      en: `The consumption index jumped from ${from} to ${to} kWh: held back, not sent to the energy monitoring. If it is right, save the configuration of the integration to accept it (the difference is then counted once as consumption).`,
-      fr: `L’index de consommation a sauté de ${from} à ${to} kWh : retenu, non envoyé au suivi énergétique. S’il est juste, enregistrez la configuration de l’intégration pour l’accepter (la différence est alors comptée une fois comme consommation).`,
-    }),
+    held: ({ direction, from, to }) => {
+      if (direction === 'down') {
+        return {
+          en: `The consumption index dropped from ${from} to ${to} kWh: held back, the last accepted value is sent again. If the meter was replaced or reset, save the configuration of the integration to accept the new value: nothing is billed for the drop, the consumption goes on from there.`,
+          fr: `L’index de consommation a baissé de ${from} à ${to} kWh : retenu, la dernière valeur acceptée est renvoyée. Si le compteur a été remplacé ou remis à zéro, enregistrez la configuration de l’intégration pour accepter la nouvelle valeur : rien n’est facturé pour la baisse, la consommation repart de là.`,
+        };
+      }
+      const kwh = Math.round((to - from) * 1000) / 1000;
+      return {
+        en: `The consumption index jumped from ${from} to ${to} kWh: held back, not sent to the energy monitoring. If you save the configuration of the integration, ${kwh} kWh will be counted at once as consumption; save only if this energy was really consumed.`,
+        fr: `L’index de consommation a sauté de ${from} à ${to} kWh : retenu, non envoyé au suivi énergétique. Si vous enregistrez la configuration de l’intégration, ${kwh} kWh seront comptés d’un coup comme consommation ; n’enregistrez que si cette énergie a vraiment été consommée.`,
+      };
+    },
   },
   test: {
     ok: (meter) => {

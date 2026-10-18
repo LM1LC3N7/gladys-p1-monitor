@@ -38,8 +38,8 @@
       "required": true,
       "label": { "en": "P1 Monitor address", "fr": "Adresse du P1 Monitor" },
       "description": {
-        "en": "The IP address of the device running P1 Monitor on your network (shown by your router), with a port only if it is not 80. Give it a fixed address in your router: the device is known by its address.",
-        "fr": "L'adresse IP de l'appareil où tourne P1 Monitor sur votre réseau (visible dans votre box), avec un port seulement s'il n'est pas 80. Donnez-lui une adresse fixe dans votre box : l'appareil est reconnu par son adresse."
+        "en": "The IP address of the device running P1 Monitor on your network (shown by your router), with a port only if it is not 80. Preferably give it a fixed address in your router; if it changes, enter the new one: the device and its history are kept.",
+        "fr": "L'adresse IP de l'appareil où tourne P1 Monitor sur votre réseau (visible dans votre box), avec un port seulement s'il n'est pas 80. Donnez-lui de préférence une adresse fixe dans votre box ; si elle change, saisissez la nouvelle : l'appareil et son historique sont gardés."
       },
       "placeholder": { "en": "e.g. 192.168.1.40", "fr": "ex. 192.168.1.40" }
     }

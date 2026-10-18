@@ -1,6 +1,6 @@
 // -----------------------------------------------------------------------------
 // The state kept in /data (the only writable place of the container): the
-// reference of the billed index and the jump held back, so that a restart
+// reference of the billed index, the value held back and the tariffs, so that a restart
 // never forgets a jump the user has not accepted. A small JSON file, written
 // through a temporary file and a rename. Failures are logged, never fatal.
 // -----------------------------------------------------------------------------

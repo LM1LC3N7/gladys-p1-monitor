@@ -47,10 +47,13 @@
   parser come from gladys-youless (same project, same rules).
 - **Stricter than the library**: a missing or non-numeric value is never 0;
   `TARIFCODE` other than `P` / `D` is unknown (the library takes it for low);
-  an index is the sum of its two tariffs only when both are there and above
-  0 (one tariff missing would read as a drop, then as a jump).
-- **External id**: `p1monitor:host-<address>`: the API gives no serial
-  number the library reads. The docs ask for a fixed address.
+  an index is the sum of its two tariffs only when both are there (one
+  tariff missing would read as a drop), see the index plausibility below.
+- **External id** (review I5): `p1monitor:meter`, one device per integration;
+  the address is only a param. The API gives no serial number the library
+  reads, and an address changes with the router: a new address of the same
+  P1 Monitor keeps the device and its history; another meter at the new
+  address is held by the guard (drop or jump) until a save.
 - **One device per integration**: most homes have one meter.
 - **Distinct modules**: not DSMR Reader (GBoulvin), YouLess nor HomeWizard;
   said in the manifest, the README and both docs (two of them on one meter
@@ -88,14 +91,45 @@
 - **Capabilities**: the reads plus the features of the created device
   (`gladys.devices`), only growing; the states are filtered on the features
   of the created device.
-- **Index plausibility** (`src/guard.js`, identical to gladys-youless): never
-  0; a drop taken after 60 min of non-zero, non-decreasing values; a jump
-  over 100 kW on average (+ 0.5 kWh) never confirmed by repetition nor by
-  time, kept in `/data/p1-monitor-state.json`, accepted only by a save of the
-  configuration (`start(…, { fresh: true })`), the difference counted once;
-  a reconnection never accepts it; the guard starts again at
-  `onDeviceCreated`. While held, the last accepted value is sent again.
-- **Frozen reading**: P1 Monitor keeps serving its last reading when the P1
+- **Index plausibility** (review B1, `src/guard.js`): the core skips a
+  negative delta but counts every rise in full, so a drop TAKEN then a rise
+  back bills the whole difference (9,194 → 10 → 9,194 = 9,184 fictive kWh).
+  Hence:
+  - (a) `indexOfTariffs`: both tariffs present, finite, at or above 0, the
+    sum above 0; against the tariffs of the last index accepted (kept in
+    /data with the guard), a tariff that was above 0 and reads 0, or a tariff
+    lower while the other is not, gives no index for that reading (one
+    register glitching is not a drop). Both lower is a real drop, for the
+    guard. A tariff at 0 is accepted when it already was 0, or with no
+    reference yet: a single-tariff meter (Belgian mono-horaire) keeps its
+    second register at 0 and must still get an index (deliberately softer
+    than "each tariff above 0" asked by the review, which would give such a
+    meter no index at all);
+  - (b) never 0;
+  - (c) a value plausible after the reference (not lower, at most 100 kW on
+    average + 0.5 kWh) goes through; a value EQUAL to the reference goes
+    through without moving its date (review I1: a frozen reading never
+    shrinks the margin of the next rise); at a restart, the same value in
+    /data and in Gladys keeps the OLDEST date, otherwise the most recent
+    reference wins;
+  - (d) a drop and a jump up are held (`held = { direction, from, to,
+threshold }`), never confirmed by repetition nor by time; every value at
+    or above a held jump stays held; the last accepted value is sent again;
+    the status shows it; a value back to the usual rule ends the hold;
+  - (e) only a save of the configuration (`start(…, { fresh: true })`)
+    accepts the value held, and only in its direction (an accepted drop
+    never takes a jump); the tariff reference is cleared then (a register
+    that changed for good). A drop taken bills nothing (negative delta), the
+    values rise from there; a jump taken is counted once. The status and the
+    docs say "X kWh will be counted at once as consumption; save only if
+    this energy was really consumed";
+  - (f) a reconnection never accepts; the guard starts again at
+    `onDeviceCreated` (its /data entry removed, guard, tariffs and saved key
+    reset after the save, review M2);
+  - (g) the margin grows with the time since the last accepted value: after
+    24 h of outage, up to 2,400 kWh pass at once (review M6, documented).
+- **Powers** (review I2): above 100 kW (`POWER_MAX`), the power taken, the
+  power injected and the powers per phase are undefined (a glitch).- **Frozen reading**: P1 Monitor keeps serving its last reading when the P1
   cable is out. The `TIMESTAMP_UTC` unchanged for 5 minutes (measured on our
   clock, so no clock skew) stops the power and the phases, with a status
   note; the indexes are still published (unchanged, so no delta).
@@ -111,7 +145,18 @@
   `forgetPublishedStates()`, clears the status cache, publishes the
   discovered device, the values and the status again.
 - **Errors**: unreachable → 10 s, doubled up to 5 min; a reconnection keeps
-  the delay, a save of the form or a good test ends it. A read never overlaps
+  the delay and sends the last failure again with the time left (review I3);
+  a save of the form or a good test ends it. Unreachable at a start, the
+  created device is still published in Discovery (review M1).
+- **Reads and restarts** (review I4): a read checks, after each await, that
+  the client and the generation are still its own, else gives up before
+  discover, publish and status; a read of a previous start is let finish,
+  then the new one runs.
+- **Clocks** (review M3): the pacing (reads, retries, intervals, frozen
+  reading) uses a monotonic clock; the wall clock only dates the index (the
+  guard, Gladys). A pacing clock found behind the last index time is reset.
+- **Order** (review M5): the secondary pages are read in parallel with the
+  meter, never after it. A read never overlaps
   another (10 s timeout per request). Logs hold our own codes only: no URL,
   no text of the device.
 - **Hostile answers**: bodies read up to 512 KiB (the status and

@@ -4,21 +4,29 @@
 // The core turns the deltas of an `energy-sensor` / `index` feature into
 // consumption and cost: it skips a delta below zero (a counter reset) but
 // counts every rise IN FULL. So 9,194 → 0 → 9,194 kWh is billed as 9,194 kWh
-// in one half hour. The rules:
+// in one half hour, and so is 9,194 → 10 (a drop taken) → 9,194. The rules:
 // - a value of 0 (or below) is never published;
 // - a value plausible after the last one published (not lower, not more than
-//   INDEX_MAX_KW on average since then) goes through;
-// - a drop (a meter replaced, a meter swapped behind the P1 Monitor) goes
-//   through only once the lower values, never 0 and never decreasing, have
-//   been read for INDEX_DROP_CONFIRM (the core then skips the negative delta);
-// - a jump up is NEVER confirmed by repetition nor by time: it is held (any
-//   value at or above it stays held, the margin growing while nothing is
-//   published must never cover it), shown in the status, kept in /data across
-//   restarts, and taken only on an explicit gesture of the user
-//   (`acceptJump`, a save of the configuration), the difference counted once.
+//   INDEX_MAX_KW on average since then) goes through; a value EQUAL to it
+//   goes through without moving its date, so that a frozen reading never
+//   shrinks the margin of the next real rise;
+// - a drop and a jump up are NEVER confirmed by repetition nor by time: they
+//   are held (the last accepted value is sent again), shown in the status,
+//   kept in /data across restarts, and taken only on an explicit gesture of
+//   the user (`acceptHeld`, a save of the configuration). A drop taken gives
+//   the core a negative delta (nothing billed), and the values after it rise
+//   from there normally; a jump taken is counted once as consumption;
+// - while a jump is held, every value at or above it stays held: the margin
+//   growing while nothing is published must never cover it;
+// - a value back to the usual rule (the drop or the jump was a glitch) ends
+//   the hold.
+//
+// `indexOfTariffs` checks the two tariffs before their sum reaches the
+// guard: a tariff that was above 0 and reads 0, or that drops alone, is a
+// glitch of one register, never a drop of the index.
 // -----------------------------------------------------------------------------
 
-import { INDEX_DROP_CONFIRM, INDEX_MAX_KW, INDEX_SLACK_KWH } from './constants.js';
+import { INDEX_MAX_KW, INDEX_SLACK_KWH } from './constants.js';
 
 const HOUR = 3_600_000;
 
@@ -35,97 +43,125 @@ const validLast = (last) =>
     ? { value: last.value, at: last.at }
     : undefined;
 
-const validJump = (jump) =>
-  jump && [jump.from, jump.to, jump.threshold].every(Number.isFinite)
-    ? { from: jump.from, to: jump.to, threshold: jump.threshold }
+const validHeld = (held) =>
+  held &&
+  (held.direction === 'up' || held.direction === 'down') &&
+  [held.from, held.to, held.threshold].every(Number.isFinite)
+    ? { direction: held.direction, from: held.from, to: held.to, threshold: held.threshold }
     : undefined;
+
+const isCounter = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+
+/**
+ * The consumption index of a reading, low + high, or undefined when it must
+ * not reach the guard at all:
+ * - a tariff missing, not a finite number, or below 0;
+ * - the sum at 0;
+ * - against `previous` (the tariffs of the last index accepted): a tariff
+ *   that was above 0 and reads 0, or a tariff lower while the other is not
+ *   (one register glitching). Both lower is a real drop: the guard holds it.
+ */
+export function indexOfTariffs(low, high, previous) {
+  if (!isCounter(low) || !isCounter(high) || low + high <= 0) {
+    return undefined;
+  }
+  if (previous && isCounter(previous.low) && isCounter(previous.high)) {
+    if ((previous.low > 0 && low === 0) || (previous.high > 0 && high === 0)) {
+      return undefined;
+    }
+    if (low < previous.low !== high < previous.high) {
+      return undefined;
+    }
+  }
+  return low + high;
+}
 
 export class IndexGuard {
   /**
    * `last`: the value Gladys already holds (`{ value, at }`), when known.
-   * `saved`: the state kept in /data (`state()`), so that a jump held back
+   * `saved`: the state kept in /data (`state()`), so that a value held back
    * stays held across a restart.
    */
   constructor(last, saved) {
     const kept = validLast(saved?.last);
     const known = validLast(last);
-    // The most recent reference wins.
-    this.last = kept && (!known || kept.at >= known.at) ? kept : known;
-    /** The lower values read since a drop: `{ value, at, since }`. */
-    this.drop = undefined;
+    if (kept && known && kept.value === known.value) {
+      // The same value: its OLDEST date, the margin of the next rise counts from it.
+      this.last = { value: kept.value, at: Math.min(kept.at, known.at) };
+    } else {
+      // Otherwise the most recent reference wins.
+      this.last = kept && (!known || kept.at >= known.at) ? kept : known;
+    }
     /**
-     * A jump held back until the user accepts it: `{ from, to, threshold }`.
-     * Every value at or above `threshold` stays held whatever the time
-     * passed: the margin of INDEX_MAX_KW grows while nothing is published,
-     * it must never end up covering the jump.
+     * A value held back until the user accepts it:
+     * `{ direction: 'up' | 'down', from, to, threshold }`. For a jump up,
+     * every value at or above `threshold` stays held whatever the time.
      */
-    this.jump = this.last ? validJump(saved?.jump) : undefined;
-    this.jumpAccepted = false;
+    this.held = this.last ? validHeld(saved?.held) : undefined;
+    this.heldAccepted = false;
   }
 
-  /** What /data keeps: the reference and the jump held. */
+  /** What /data keeps: the reference and the value held. */
   state() {
-    return { last: this.last ?? null, jump: this.jump ?? null };
+    return { last: this.last ?? null, held: this.held ?? null };
   }
 
-  /** The user accepts the current index (a save of the configuration). */
-  acceptJump() {
-    if (this.jump) {
-      this.jumpAccepted = true;
+  /** The user accepts the value held (a save of the configuration). */
+  acceptHeld() {
+    if (this.held) {
+      this.heldAccepted = true;
     }
   }
 
   /** Whether `value`, read at `at`, may be published. A published value becomes the reference. */
   accept(value, at) {
     if (!Number.isFinite(value) || value <= 0) {
-      // Never 0, and a 0 breaks a drop being confirmed.
-      this.drop = undefined;
       return false;
     }
-    if (this.jump && value >= this.jump.threshold) {
-      this.drop = undefined;
-      if (this.jumpAccepted) {
+    if (!this.last) {
+      return this.take(value, at);
+    }
+    if (value === this.last.value) {
+      // Unchanged (a frozen reading): published, its date NOT moved.
+      this.release();
+      return true;
+    }
+    const up = this.held?.direction === 'up';
+    if (up && value >= this.held.threshold) {
+      if (this.heldAccepted) {
         return this.take(value, at);
       }
       // Held, however long ago the last value was published.
-      this.jump = { ...this.jump, to: value };
+      this.held = { ...this.held, to: value };
       return false;
     }
-    if (!this.last || follows(this.last, value, at)) {
+    if (follows(this.last, value, at)) {
       return this.take(value, at);
     }
-    if (value > this.last.value) {
-      this.drop = undefined;
-      if (this.jumpAccepted) {
-        return this.take(value, at);
-      }
-      this.jump = {
-        from: this.last.value,
-        to: value,
-        threshold: Math.min(value, this.jump?.threshold ?? Infinity),
-      };
-      return false;
-    }
-    // Lower than the reference: a drop, confirmed by lower values never
-    // decreasing, read over INDEX_DROP_CONFIRM.
-    this.jump = undefined;
-    this.jumpAccepted = false;
-    if (this.drop && follows(this.drop, value, at)) {
-      this.drop = { value, at, since: this.drop.since };
-    } else {
-      this.drop = { value, at, since: at };
-    }
-    if (at - this.drop.since >= INDEX_DROP_CONFIRM) {
+    const direction = value > this.last.value ? 'up' : 'down';
+    if (this.heldAccepted && this.held?.direction === direction) {
       return this.take(value, at);
     }
+    if (this.held?.direction !== direction) {
+      this.heldAccepted = false;
+    }
+    this.held = {
+      direction,
+      from: this.last.value,
+      to: value,
+      threshold: direction === 'up' && up ? Math.min(value, this.held.threshold) : value,
+    };
     return false;
+  }
+
+  release() {
+    this.held = undefined;
+    this.heldAccepted = false;
   }
 
   take(value, at) {
     this.last = { value, at };
-    this.drop = undefined;
-    this.jump = undefined;
-    this.jumpAccepted = false;
+    this.release();
     return true;
   }
 }

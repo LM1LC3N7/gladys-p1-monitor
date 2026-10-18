@@ -71,17 +71,17 @@ test/                             node --test, against the SDK's fake Gladys (in
   tariff). `power` (taken from the grid) stays the only `energy-sensor` /
   `power` feature; the injected power is a plain sensor.
 - **The billed index passes `IndexGuard`** (`src/guard.js`): never 0, a drop
-  confirmed over 60 min, a jump up never confirmed by repetition nor by time,
+  and a jump up never confirmed by repetition nor by time (both held),
   only by a save of the configuration. The other counters are never
   published at 0.
 - **A secondary page never blocks the main data**: status, configuration
   and water failing keep the power and the indexes going.
 - **Never a text of the device in a message**, never a URL in the logs:
   error messages use our own words and codes.
-- **External ids are forever**: `p1monitor:host-<address>`, the `FEATURE`
+- **External ids are forever**: `p1monitor:meter` (one device per integration, the address only a param), the `FEATURE`
   keys of `src/devices.js`, the manifest keys.
 - **The container rootfs is read-only.** Write only under `/data`, the one
-  writable volume: `src/store.js` keeps the index reference and a jump held
+  writable volume: `src/store.js` keeps the index reference, a value held and the tariffs
   in `/data/p1-monitor-state.json`.
 - **Versions belong to the Release workflow** (Actions → Release). Never edit
   `version` in `package.json` or in the manifest, nor the `docker_image` tag,

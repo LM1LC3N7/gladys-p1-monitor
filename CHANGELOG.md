@@ -22,8 +22,8 @@ the notes of the version's GitHub Release.
   power, voltage and current per phase; gas and water as volume sensors in
   m³, out of the energy monitoring; the prices as plain sensors.
 - The consumption index is protected (the core counts every rise in full):
-  never 0, never a partial sum; a drop taken after 60 minutes of non-zero,
-  non-decreasing values; a jump over 100 kW on average held whatever the time
+  never 0, never a partial sum, a register at 0 or dropping alone ignored;
+  a drop held (never confirmed by time); a jump over 100 kW on average held whatever the time
   passed and across restarts (kept in `/data`), shown in the status and
   accepted only when the user saves the configuration (the difference counted
   once). The other counters are never sent at 0.
@@ -40,5 +40,17 @@ the notes of the version's GitHub Release.
   once.
 - Documentation in English and French; `LICENSE` (Apache-2.0) and
   `THIRD_PARTY_NOTICES.md` (MIT license of p1monitor), shipped in the image.
+
+### Changed
+
+- Review of milestone 1: a drop of the consumption index is held like a jump,
+  never confirmed by time (a drop taken then a rise back would have billed
+  thousands of fictive kWh); a tariff at 0 or dropping alone gives no index;
+  a frozen reading never shrinks the margin of the next rise; powers above
+  100 kW ignored; one device per integration (`p1monitor:meter`), the address
+  only a parameter; the last failure shown again after a reconnection; a read
+  of an old address publishes nothing; the created device still offered when
+  the P1 Monitor is unreachable at the start; pacing on a monotonic clock;
+  secondary pages read in parallel with the meter.
 
 [Unreleased]: https://github.com/LM1LC3N7/gladys-p1-monitor/commits/main

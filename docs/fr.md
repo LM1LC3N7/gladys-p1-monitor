@@ -52,9 +52,9 @@ vérifié).
 
 ## Installation
 
-1. Donnez à l'appareil où tourne P1 Monitor une **adresse IP fixe** dans
-   votre box : l'appareil Gladys est reconnu par cette adresse (la changer
-   crée un nouvel appareil).
+1. Donnez de préférence à l'appareil où tourne P1 Monitor une **adresse IP
+   fixe** dans votre box. Si elle change, saisissez la nouvelle : l'appareil
+   Gladys (un seul par intégration) et son historique sont gardés.
 2. Dans Gladys, installez l'intégration P1 Monitor depuis le store, ouvrez sa
    configuration et saisissez l'**adresse** (ex. `192.168.1.40`, avec `:port`
    seulement s'il n'est pas 80).
@@ -80,23 +80,34 @@ fait Home Assistant) ; le HTTPS de P1 Monitor n'est pas utilisé.
   ne sont plus envoyées (elles paraîtraient actuelles) et l'état le signale.
 - **Index de consommation protégé** (Gladys compte chaque remontée en
   entier) :
-  - un index à 0 n'est jamais envoyé, ni une somme partielle (un tarif
-    manquant : aucun index) ; les index par tarif, d'injection, le gaz et
-    l'eau ne sont jamais envoyés à 0 non plus ;
-  - une **baisse** (compteur remplacé) n'est acceptée qu'après 60 minutes de
-    valeurs non nulles et qui ne baissent plus ; la consommation de ces
-    60 minutes d'attente est perdue ;
+  - un index à 0 n'est jamais envoyé, ni une somme partielle : un tarif
+    manquant, un tarif qui passait au-dessus de 0 et lit 0, ou un seul tarif
+    qui baisse ne donnent aucun index pour ce relevé (un registre qui flanche
+    n'est pas une baisse). Les index par tarif, d'injection, le gaz et l'eau
+    ne sont jamais envoyés à 0 non plus ;
+  - une **baisse** des deux tarifs (compteur remplacé ou remis à zéro) n'est
+    **jamais** acceptée toute seule, ni par le temps qui passe : elle est
+    retenue, la dernière valeur acceptée est renvoyée à Gladys, et l'état de
+    l'intégration l'affiche. Si les valeurs reviennent, elles reprennent
+    normalement, sans aucun kWh fictif. Si le compteur a vraiment changé,
+    **enregistrez la configuration** de l'intégration : la nouvelle valeur est
+    acceptée, rien n'est facturé pour la baisse, et la consommation repart de
+    là ;
   - un **saut vers le haut** (plus de 100 kW en moyenne depuis la dernière
-    valeur) n'est **jamais** accepté tout seul, ni par répétition, ni par le
-    temps qui passe, ni par un redémarrage : toute valeur égale ou supérieure
-    reste retenue (la retenue est gardée dans `/data`), la dernière valeur
-    acceptée est renvoyée à Gladys, et l'état de l'intégration affiche le
-    saut. S'il est juste, **enregistrez la configuration** de l'intégration :
-    l'index en cours est alors accepté, et la différence est **comptée une
-    fois** comme consommation.
-- Les valeurs inchangées ne sont renvoyées que toutes les 10 minutes ; à
-  chaque reconnexion à Gladys, l'appareil, toutes ses valeurs et l'état sont
-  publiés à nouveau.
+    valeur acceptée) n'est **jamais** accepté tout seul, ni par répétition, ni
+    par le temps qui passe, ni par un redémarrage : toute valeur égale ou
+    supérieure reste retenue (la retenue est gardée dans `/data`), la
+    dernière valeur acceptée est renvoyée à Gladys, et l'état affiche le saut.
+    Si vous **enregistrez la configuration**, la différence (par exemple
+    5000 kWh) **sera comptée d'un coup comme consommation** : n'enregistrez
+    que si cette énergie a vraiment été consommée ;
+  - la marge de 100 kW compte depuis la dernière valeur acceptée : après une
+    longue panne, elle grandit (24 h de panne laissent passer jusqu'à
+    2400 kWh d'un coup). Un relevé figé (même valeur) ne déplace pas la date
+    de la dernière valeur, pour que la reprise ne soit pas prise pour un
+    saut.- Les valeurs inchangées ne sont renvoyées que toutes les 10 minutes ; à
+    chaque reconnexion à Gladys, l'appareil, toutes ses valeurs et l'état sont
+    publiés à nouveau.
 - Les caractéristiques de l'appareil sont figées à sa création : si une
   valeur apparaît plus tard (premiers panneaux solaires, compteur d'eau),
   cliquez sur « Mettre à jour » dans l'onglet Découverte : les nouvelles

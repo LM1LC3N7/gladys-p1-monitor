@@ -24,7 +24,7 @@
 // library takes anything else for low).
 // -----------------------------------------------------------------------------
 
-import { CONFIGURATION_ID, PRICE_MAX, STATUS_ID } from '../constants.js';
+import { CONFIGURATION_ID, POWER_MAX, PRICE_MAX, STATUS_ID } from '../constants.js';
 
 /** A number, or a numeric string ("0.863"): anything else (null, '', true) is undefined. */
 export function num(value) {
@@ -45,7 +45,11 @@ const counter = (value) => {
 
 /** The sum of two tariffs, only when both are there and it is above 0. */
 const sum = (low, high) =>
-  low !== undefined && high !== undefined && low + high > 0 ? low + high : undefined;
+  Number.isFinite(low) && Number.isFinite(high) && low + high > 0 ? low + high : undefined;
+
+/** A power in W, between 0 and POWER_MAX: anything else is a glitch, undefined. */
+const power = (value) =>
+  value !== undefined && value >= 0 && value <= POWER_MAX ? value : undefined;
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -92,8 +96,8 @@ export function parseSmartmeter(data) {
   const gas = counter(row.CONSUMPTION_GAS_M3);
   return {
     timestamp: num(row.TIMESTAMP_UTC),
-    power: counter(row.CONSUMPTION_W),
-    injectionPower: counter(row.PRODUCTION_W),
+    power: power(num(row.CONSUMPTION_W)),
+    injectionPower: power(num(row.PRODUCTION_W)),
     consumption,
     injection,
     tariff: tariffOf(row.TARIFCODE),
@@ -115,7 +119,7 @@ function byId(data, idKey, valueKey) {
   return values;
 }
 
-const watts = (kw) => (kw === undefined ? undefined : Math.round(kw * 1000));
+const watts = (kw) => (kw === undefined ? undefined : power(Math.round(kw * 1000)));
 
 /**
  * /api/v1/status: the phases. Only the phases that show something (a value

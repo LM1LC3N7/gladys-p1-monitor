@@ -31,8 +31,9 @@ Gladys ⇄ SDK ⇄ src/app.js (P1MonitorApp)
   meter page decides whether the P1 Monitor is reachable; the three others
   are secondary: their failure is logged once, shown in the status, tried
   again every 5 minutes, and never holds back the main values.
-- **One device**, external id `p1monitor:host-<address>` (the API gives no
-  serial number). Its features are what the P1 Monitor showed plus what the
+- **One device**, external id `p1monitor:meter` (the API gives no serial
+  number; the address is only a param, so a new IP address keeps the device
+  and its history). Its features are what the P1 Monitor showed plus what the
   created device carries (from `gladys.devices`): the published device never
   shrinks.
 - **Energy**: `consumption_index` (energy-sensor / index, kWh) is the only
@@ -42,14 +43,16 @@ Gladys ⇄ SDK ⇄ src/app.js (P1MonitorApp)
   and prices are plain sensors (never billed, never counted twice); gas and
   water are volume sensors (m³), out of the energy monitoring. No
   `daily-consumption`, no `publishEnergyConsumption`.
-- **Index plausibility** (`src/guard.js`, shared with gladys-youless; the
-  core skips a negative delta but counts every rise in full): never 0, never
-  a partial sum; a drop is taken after 60 min of non-zero, non-decreasing
-  values; a jump over 100 kW on average is never confirmed by repetition nor
-  by time: held (kept in `/data/p1-monitor-state.json` across restarts), the
-  last accepted value sent again, shown in the status, accepted only by a
-  save of the configuration (the difference counted once). The other
-  counters are never published at 0.
+- **Index plausibility** (`src/guard.js`; the core skips a negative delta
+  but counts every rise in full): never 0, never a partial sum; a tariff
+  that was above 0 and reads 0, or that drops alone, gives no index for that
+  reading; a drop of the sum and a jump over 100 kW on average are never
+  confirmed by repetition nor by time: held (kept in
+  `/data/p1-monitor-state.json` across restarts), the last accepted value
+  sent again, shown in the status, accepted only by a save of the
+  configuration (a drop then bills nothing, a jump is counted once). A value
+  equal to the reference never moves its date (a frozen reading never
+  shrinks the margin). The other counters are never published at 0.
 - **Pace**: one read every 10 s (power, phases); the indexes, tariff, gas,
   water and prices are published once a minute; water read every 5 min,
   prices every 15 min; `publishChangedStates` with a 10-minute heartbeat.

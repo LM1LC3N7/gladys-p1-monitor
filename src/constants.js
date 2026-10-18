@@ -5,8 +5,13 @@
 
 export const ACTIONS = { TEST: 'test_connection' };
 
-/** The type part of the external ids: `p1monitor:host-<address>`. */
+/**
+ * The external id of the device: `p1monitor:meter`, one device per
+ * integration, whatever the address (a new IP address of the same P1 Monitor
+ * keeps its device and history).
+ */
 export const EXTERNAL_ID_TYPE = 'p1monitor';
+export const PLATFORM_ID = 'meter';
 
 // --- The local REST API of P1 Monitor (as the p1monitor library reads it) --------
 export const PATHS = {
@@ -84,11 +89,8 @@ export const READING_STALE_AFTER = 5 * MINUTE;
 export const INDEX_MAX_KW = 100;
 /** kWh always accepted on top of INDEX_MAX_KW × hours (rounding, a late read). */
 export const INDEX_SLACK_KWH = 0.5;
-/**
- * A drop is taken only once lower values (never 0, never decreasing) have
- * been read for this long. A jump up is never taken without the user.
- */
-export const INDEX_DROP_CONFIRM = 60 * MINUTE;
+/** A power above this (W) is a glitch: a home connection never draws nor injects as much. */
+export const POWER_MAX = 100_000;
 
 /** A price set in P1 Monitor outside this range (euro) is not shown. */
 export const PRICE_MAX = 100;

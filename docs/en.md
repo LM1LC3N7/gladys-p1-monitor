@@ -50,9 +50,9 @@ tariff 1 is the day tariff, check which one matches your bill (not verified).
 
 ## Installation
 
-1. Give the device running P1 Monitor a **fixed IP address** in your router:
-   the Gladys device is known by this address (changing it creates a new
-   device).
+1. Preferably give the device running P1 Monitor a **fixed IP address** in
+   your router. If it changes, enter the new one: the Gladys device (one per
+   integration) and its history are kept.
 2. In Gladys, install the P1 Monitor integration from the store, open its
    configuration and enter the **address** (e.g. `192.168.1.40`, with
    `:port` only if it is not 80).
@@ -76,22 +76,30 @@ Assistant does); the HTTPS of P1 Monitor is not used.
   5 minutes (P1 cable unplugged, reading stopped), the power and the phases
   are no longer sent (they would look current) and the status says so.
 - **Consumption index protected** (Gladys counts every rise in full):
-  - an index at 0 is never sent, nor a partial sum (a tariff missing: no
-    index); the tariff and injection indexes, gas and water are never sent
-    at 0 either;
-  - a **drop** (meter replaced) is accepted only after 60 minutes of
-    non-zero, non-decreasing values; the consumption of these 60 minutes of
-    waiting is lost;
-  - a **jump up** (more than 100 kW on average since the last value) is
-    **never** accepted by itself, not by repetition, not by time, not by a
-    restart: every value at or above it stays held (the hold is kept in
-    `/data`), the last accepted value is sent again to Gladys, and the
-    integration status shows the jump. If it is right, **save the
-    configuration** of the integration: the current index is then accepted,
-    and the difference is **counted once** as consumption.
-- Unchanged values are sent again only every 10 minutes; on each
-  reconnection to Gladys, the device, all its values and the status are
-  published again.
+  - an index at 0 is never sent, nor a partial sum: a tariff missing, a
+    tariff that was above 0 and reads 0, or a single tariff dropping give no
+    index for that reading (a register glitching is not a drop). The tariff
+    and injection indexes, gas and water are never sent at 0 either;
+  - a **drop** of both tariffs (meter replaced or reset) is **never**
+    accepted by itself, not by time either: it is held, the last accepted
+    value is sent again to Gladys, and the integration status shows it. If
+    the values come back, they go on normally, without any fictive kWh. If
+    the meter really changed, **save the configuration** of the integration:
+    the new value is accepted, nothing is billed for the drop, and the
+    consumption goes on from there;
+  - a **jump up** (more than 100 kW on average since the last accepted
+    value) is **never** accepted by itself, not by repetition, not by time,
+    not by a restart: every value at or above it stays held (the hold is kept
+    in `/data`), the last accepted value is sent again to Gladys, and the
+    status shows the jump. If you **save the configuration**, the difference
+    (for instance 5000 kWh) **will be counted at once as consumption**: save
+    only if this energy was really consumed;
+  - the 100 kW margin counts from the last accepted value: after a long
+    outage it grows (24 hours of outage let up to 2400 kWh through at once).
+    A frozen reading (same value) does not move the date of the last value,
+    so that the recovery is not taken for a jump.- Unchanged values are sent again only every 10 minutes; on each
+    reconnection to Gladys, the device, all its values and the status are
+    published again.
 - The features of the device are fixed when it is created: if a value
   appears later (first solar panels, a water meter), click "Update" in the
   Discover tab: the new values arrive at once. The device published again
