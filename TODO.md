@@ -35,6 +35,10 @@
 
 ## Decisions
 
+- **SDK `^0.16.0`** (2026-10-27, migration wave 4): 0.16.0 is on npm since
+  2026-10-25 (a stale npm cache said otherwise); it adds the ai, tts and music
+  types; no effect here (`poll_frequency` unused). `keywords`, `countries`
+  and `gladys_version >= 5.3.0` wait until Gladys 5.3 is widespread.
 - **Versions**: 0.1.0 set once by hand when leaving the template (package,
   lock file, manifest, image tag), as for the sibling integrations; the
   Release workflow owns them from now on (the first patch release gives
@@ -170,8 +174,17 @@ held.at) + 0.5 kWh`, a drop only for `v ≤ held.to + margin`; any other
   discover, publish and status; a read of a previous start is let finish,
   then the new one runs.
 - **Clocks** (review M3): the pacing (reads, retries, intervals, frozen
-  reading) uses a monotonic clock; the wall clock only dates the index (the
-  guard, Gladys). A pacing clock found behind the last index time is reset.
+  reading) uses a monotonic clock. A pacing clock found behind the last
+  index time is reset. The index guard runs on a session clock (2026-10-27,
+  migration wave 4, as gladys-openems in lot 17): the wall clock read once
+  at the start of the process plus the monotonic time since, so that NTP
+  moving the wall clock by hours never widens nor narrows its margin. /data
+  keeps wall dates (session date + the wall offset of the moment it is
+  written), turned back into session dates when the guard loads; a date
+  from /data or from Gladys ahead of the session clock is taken as now. No
+  wait after a restart: a local device read every 10 s. Tested: wall clock
+  10 h ahead, 10 min back, set by NTP before the guard loads, a fresh
+  monotonic clock at each life (a life started 10 h late).
 - **Order** (review M5): the secondary pages are read in parallel with the
   meter, never after it. A read never overlaps
   another (10 s timeout per request). Logs hold our own codes only: no URL,

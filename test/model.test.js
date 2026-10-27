@@ -569,15 +569,12 @@ test('the address: IP, host name, port, pasted URL; never credentials', () => {
   assert.deepEqual(normalizeConfig({ address: 'u@x' }), { address: '', invalidAddress: true });
 });
 
-test('the /data store: written through a temporary file, read back, empty when absent', async () => {
+test('the /data store: written through a temporary file, read back, empty when absent', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'p1-monitor-'));
-  try {
-    const store = createFileStore(join(dir, 'state.json'));
-    assert.deepEqual(store.load(), {});
-    await store.save({ a: { last: { value: 1, at: 2 }, jump: null } });
-    assert.deepEqual(store.load(), { a: { last: { value: 1, at: 2 }, jump: null } });
-    assert.deepEqual(createFileStore(join(dir, 'missing', 'x.json')).load(), {});
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = createFileStore(join(dir, 'state.json'));
+  assert.deepEqual(store.load(), {});
+  await store.save({ a: { last: { value: 1, at: 2 }, jump: null } });
+  assert.deepEqual(store.load(), { a: { last: { value: 1, at: 2 }, jump: null } });
+  assert.deepEqual(createFileStore(join(dir, 'missing', 'x.json')).load(), {});
 });

@@ -10,6 +10,18 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+### Changed
+
+- Integration SDK 0.16 (no change for the devices).
+
+### Fixed
+
+- The plausibility check of the consumption index no longer follows the wall
+  clock: a clock moved by hours (NTP, a Raspberry Pi without a hardware clock)
+  neither widens nor narrows the margin of the next rise. It runs on the time
+  elapsed since the start; the dates kept in /data and those read from Gladys
+  are bounded by it.
+
 ## [0.1.3] - 2026-10-23
 
 ## [0.1.2] - 2026-10-18

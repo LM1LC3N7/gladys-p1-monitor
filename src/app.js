@@ -8,9 +8,18 @@
 // The created devices are read from `gladys.devices`, which the SDK keeps up
 // to date (connection, creation, update, deletion): never a copy of our own.
 //
-// Two clocks: `now` (wall clock) dates the index for the guard and for
-// Gladys; `monotonic` paces the reads, retries and intervals, so that a wall
-// clock set back never stops them.
+// Clocks: `monotonic` paces the reads, retries and intervals, so that a wall
+// clock set back never stops them. The index guard runs on the SESSION clock:
+// the wall clock read once at the start of the process plus the monotonic
+// time since (`sessionNow`), so that NTP moving the wall clock by hours never
+// widens nor narrows its margin (as gladys-openems, lot 17). The wall clock
+// itself only dates what /data keeps for the next process: a monotonic
+// instant belongs to its process (a restarted container starts its monotonic
+// clock near 0), so /data holds wall dates, turned into session dates when
+// loaded. A date read from /data or from Gladys is bounded by the session
+// clock: a date "in the future" (a wall clock set back across a restart) is
+// now, so the margin of the next rise never shrinks to nothing. There is no
+// wait after a restart: the P1 Monitor is a local device, read every 10 s.
 // -----------------------------------------------------------------------------
 
 import { createLogger } from '@gladysassistant/integration-sdk';
@@ -96,6 +105,9 @@ export class P1MonitorApp {
     this.logger = logger;
     this.now = now;
     this.monotonic = monotonic;
+    /** The session clock: wall at the start of the process + monotonic elapsed since. */
+    this.wallStart = now();
+    this.monoStart = monotonic();
     this.timers = timers;
     this.clientFactory = clientFactory;
     this.config = normalizeConfig();
@@ -123,6 +135,11 @@ export class P1MonitorApp {
     this.lastStatus = undefined;
     this.generation = 0;
     this.lifecycle = Promise.resolve();
+  }
+
+  /** The session clock (ms since epoch): never moved by a wall clock set by NTP. */
+  sessionNow() {
+    return this.wallStart + (this.monotonic() - this.monoStart);
   }
 
   // --- Lifecycle -------------------------------------------------------------
@@ -465,11 +482,25 @@ export class P1MonitorApp {
     return this.guardOf(created, this.externalIds().feature(FEATURE.CONSUMPTION_INDEX));
   }
 
-  /** The guard of the created device, from Gladys and /data. */
+  /**
+   * The guard of the created device, from Gladys and /data, on the session
+   * clock. /data and Gladys hold wall dates: turned into session dates with
+   * the offset of now, then bounded by the session clock.
+   */
   guardOf(created, indexId) {
     if (!this.guard) {
       const saved = this.store.load()[indexId];
-      this.guard = new IndexGuard(lastValueOf(created, indexId), saved, this.now());
+      const sessionNow = this.sessionNow();
+      const offset = this.now() - sessionNow;
+      const toSession = (ref) =>
+        ref && Number.isFinite(ref.at)
+          ? { ...ref, at: Math.min(ref.at - offset, sessionNow) }
+          : ref;
+      const kept =
+        saved && typeof saved === 'object'
+          ? { ...saved, last: toSession(saved.last), held: toSession(saved.held) }
+          : saved;
+      this.guard = new IndexGuard(toSession(lastValueOf(created, indexId)), kept, sessionNow);
       this.tariffRef = validTariffs(saved?.tariffs);
     }
     return this.guard;
@@ -499,7 +530,7 @@ export class P1MonitorApp {
       const sum = indexOfTariffs(low, high, this.tariffRef);
       const total = sum === undefined ? undefined : round(sum, 3);
       this.indexUndefined = total === undefined;
-      const plausible = total !== undefined && guard.accept(total, this.now());
+      const plausible = total !== undefined && guard.accept(total, this.sessionNow());
       if (plausible) {
         this.tariffRef = { low, high };
       }
@@ -533,9 +564,17 @@ export class P1MonitorApp {
       .catch((err) => this.logger.warn(`Publishing the P1 Monitor values failed: ${err.message}`));
   }
 
-  /** Keeps the guard in /data when its reference, its value held or the tariffs changed. */
+  /**
+   * Keeps the guard in /data when its reference, its value held or the
+   * tariffs changed. Its session dates are written as wall dates (the offset
+   * of now), so that a life started before NTP set the clock never leaves
+   * dates that widen the margin of the next life.
+   */
   async saveGuard(indexId) {
     const state = { ...this.guard.state(), tariffs: this.tariffRef ?? null };
+    const offset = this.now() - this.sessionNow();
+    const toWall = (ref) =>
+      ref && Number.isFinite(ref.at) ? { ...ref, at: ref.at + offset } : ref;
     const key = JSON.stringify([
       state.last,
       state.held && {
@@ -549,7 +588,10 @@ export class P1MonitorApp {
       return;
     }
     try {
-      await this.store.save({ ...this.store.load(), [indexId]: state });
+      await this.store.save({
+        ...this.store.load(),
+        [indexId]: { ...state, last: toWall(state.last), held: toWall(state.held) },
+      });
       this.savedGuard = key;
     } catch (err) {
       this.logger.warn(

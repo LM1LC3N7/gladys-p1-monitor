@@ -75,18 +75,20 @@ async function setup({
   devices = [],
   store = createMemoryStore(),
   now = NOW,
+  mono = now,
 } = {}) {
   const fake = createFetch(routes);
   const gladys = createFakeGladys({ selector: SELECTOR, config, devices });
   await gladys.connect();
   const timers = createFakeTimers();
-  const clock = { now };
+  /** `now` the wall clock, `mono` the monotonic one (moved apart by the clock tests). */
+  const clock = { now, mono };
   const logger = createLogger();
   const app = new P1MonitorApp({
     gladys,
     logger,
     now: () => clock.now,
-    monotonic: () => clock.now,
+    monotonic: () => clock.mono,
     timers,
     store,
     clientFactory: (options) => new P1MonitorClient({ ...options, fetchImpl: fake.fetch }),
@@ -98,6 +100,7 @@ async function setup({
   /** The next 10-second tick (or `ms` later). */
   const tick = async (ms = POWER_INTERVAL) => {
     clock.now += ms;
+    clock.mono += ms;
     await timers.runIntervals();
   };
   return { app, gladys, timers, clock, logger, fake, tick };
@@ -678,3 +681,130 @@ test('a secondary page failing while the meter fails is not counted', async () =
   assert.ok(!logger.lines.some((l) => /page unavailable/.test(l)));
   assert.doesNotMatch(status(gladys).message.fr, /Certaines pages/);
 });
+
+// --- The guard on the session clock (wall at the start + monotonic since) ------
+
+const HOUR = 3_600_000;
+const LOW = 5436.256;
+
+test('the wall clock moved 10 h ahead between two reads: +900 kWh still held', async () => {
+  const routes = p1Routes();
+  const { app, gladys, tick, clock } = await setup({ routes, devices: [created()] });
+  await app.start(CONFIG);
+  await app.idle();
+  assert.deepEqual(indexes(gladys), [INDEX]);
+  // NTP moves the wall clock 10 h ahead; one real minute passes.
+  clock.now += 10 * HOUR;
+  routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 900 }, 2));
+  await tick(MINUTE);
+  assert.deepEqual(distinct(indexes(gladys)), [INDEX]);
+  assert.match(status(gladys).message.fr, /sauté de 8432.397 à 9332.397 kWh/);
+  // Ten real hours later, the same value is still held (never confirmed by time).
+  for (let i = 0; i < 10; i += 1) {
+    await tick(HOUR);
+  }
+  assert.deepEqual(distinct(indexes(gladys)), [INDEX]);
+});
+
+test('the wall clock set back 10 min: a normal rise is published, nothing held', async () => {
+  const routes = p1Routes();
+  const { app, gladys, tick, clock } = await setup({ routes, devices: [created()] });
+  await app.start(CONFIG);
+  await app.idle();
+  clock.now -= 10 * MINUTE;
+  // 1 kWh in one real minute (60 kW): above the 0.5 kWh of slack alone.
+  routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 1 }, 2));
+  await tick(MINUTE);
+  assert.equal(indexes(gladys).at(-1), 8433.397);
+  assert.doesNotMatch(status(gladys).message.fr, /sauté/);
+  // /data keeps the wall date of that reference (the wall clock of now).
+  const id = F('consumption_index');
+  assert.equal(app.store.load()[id].last.at, clock.now);
+});
+
+test('a date from Gladys or /data ahead of the clock (set back across a restart) is now', async () => {
+  for (const source of ['gladys', '/data']) {
+    const store = createMemoryStore();
+    const device = created();
+    if (source === 'gladys') {
+      const index = device.features.find((f) => f.external_id.endsWith(':consumption_index'));
+      index.last_value = INDEX;
+      index.last_value_changed = new Date(NOW + HOUR).toISOString();
+    } else {
+      await store.save({
+        [F('consumption_index')]: { last: { value: INDEX, at: NOW + HOUR }, held: null },
+      });
+    }
+    const routes = p1Routes();
+    // A new process: its monotonic clock starts near 0.
+    const { app, gladys, tick } = await setup({ routes, devices: [device], store, mono: 25 });
+    await app.start(CONFIG);
+    await app.idle();
+    routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 1 }, 2));
+    await tick(MINUTE);
+    assert.equal(indexes(gladys).at(-1), 8433.397, source);
+    assert.doesNotMatch(status(gladys).message.fr, /sauté/, source);
+  }
+});
+
+test('a new clock at each life: /data keeps wall dates, a life started before NTP widens nothing', async () => {
+  const store = createMemoryStore();
+  const routes = p1Routes();
+  // Life 1: started 10 h behind (no hardware clock), its monotonic clock near 0.
+  const first = await setup({
+    routes,
+    devices: [created()],
+    store,
+    now: NOW - 10 * HOUR,
+    mono: 40,
+  });
+  await first.app.start(CONFIG);
+  await first.app.idle();
+  // NTP sets the wall clock; the session clock of this life stays 10 h behind.
+  first.clock.now += 10 * HOUR;
+  routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 0.1 }, 2));
+  await first.tick(MINUTE);
+  assert.equal(indexes(first.gladys).at(-1), 8432.497);
+  await first.app.stop();
+  // Written on the wall clock of the moment, not on the late session clock.
+  assert.equal(store.load()[F('consumption_index')].last.at, NOW + MINUTE);
+  // Life 2, one hour later: a fresh process, its monotonic clock near 0 again.
+  // +900 kWh in an hour is held (margin about 100 kWh), whatever life 1's lag;
+  // +50 kWh in that hour (from the same /data) is taken.
+  for (const [rise, taken] of [
+    [900, false],
+    [50, true],
+  ]) {
+    const life = await setup({
+      routes,
+      devices: [created()],
+      store: createMemoryStore(store.load()),
+      now: NOW + HOUR,
+      mono: 30,
+    });
+    routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + rise }, 3));
+    await life.app.start(CONFIG);
+    await life.app.idle();
+    assert.equal(indexes(life.gladys).at(-1), taken ? round3(INDEX + rise) : 8432.497, `+${rise}`);
+    assert.equal(/sauté/.test(status(life.gladys).message.fr), !taken, `+${rise}`);
+  }
+});
+
+test('the wall clock set by NTP before the guard is loaded: /data dates read on the offset of now', async () => {
+  // The reference was written an hour ago of the real time (NOW + 9 h).
+  const store = createMemoryStore({
+    [F('consumption_index')]: { last: { value: INDEX, at: NOW + 9 * HOUR }, held: null },
+  });
+  const routes = p1Routes();
+  // The process starts 10 h late (wall NOW), NTP sets it before the first read.
+  const { app, gladys, clock } = await setup({ routes, devices: [created()], store, mono: 20 });
+  clock.now += 10 * HOUR;
+  routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 50 }, 2));
+  await app.start(CONFIG);
+  await app.idle();
+  // +50 kWh in that hour: taken (an hour of margin, not the slack alone).
+  assert.equal(indexes(gladys).at(-1), 8482.397);
+  assert.doesNotMatch(status(gladys).message.fr, /sauté/);
+});
+
+const round3 = (v) => Math.round(v * 1000) / 1000;
