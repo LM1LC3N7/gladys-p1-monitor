@@ -11,20 +11,26 @@
 // Clocks: `monotonic` paces the reads, retries and intervals, so that a wall
 // clock set back never stops them. The index guard runs on the SESSION clock:
 // the wall clock read once at the start of the process plus the monotonic
-// time since (`sessionNow`), so that NTP moving the wall clock by hours never
-// widens nor narrows its margin (as gladys-openems, lot 17). The wall clock
+// time since (`sessionNow`), so that NTP moving the wall clock by hours during
+// a life never widens nor narrows its margin (as gladys-openems, lot 17). The wall clock
 // itself only dates what /data keeps for the next process: a monotonic
 // instant belongs to its process (a restarted container starts its monotonic
 // clock near 0), so /data holds wall dates, turned into session dates when
 // loaded. A date read from /data or from Gladys is bounded by the session
 // clock: a date "in the future" (a wall clock set back across a restart) is
-// now, so the margin of the next rise never shrinks to nothing. There is no
-// wait after a restart: the P1 Monitor is a local device, read every 10 s.
+// now, so the margin of the next rise never shrinks to nothing. /data is
+// written again when the wall offset moves, and an unchanged reference keeps
+// the wall date /data gave it (review r1, I1). Residuals, documented: a life
+// that starts with the wall clock hours ahead, and a restart less than a
+// minute after NTP set the clock. There is no wait after a restart: the P1
+// Monitor is a local device, read every 10 s.
 // -----------------------------------------------------------------------------
 
 import { createLogger } from '@gladysassistant/integration-sdk';
 import { normalizeConfig } from './config.js';
 import {
+  ACCEPT_CONFIRM_AFTER,
+  ACCEPT_CONFIRM_WITHIN,
   INDEX_INTERVAL,
   NO_WATER_RETRY,
   POWER_INTERVAL,
@@ -46,7 +52,7 @@ import {
   liveStates,
   round,
 } from './devices.js';
-import { IndexGuard, indexOfTariffs } from './guard.js';
+import { IndexGuard, indexOfTariffs, margin } from './guard.js';
 import { createFileStore } from './store.js';
 import { T } from './i18n.js';
 import { P1MonitorClient } from './p1monitor/client.js';
@@ -502,6 +508,13 @@ export class P1MonitorApp {
           : saved;
       this.guard = new IndexGuard(toSession(lastValueOf(created, indexId)), kept, sessionNow);
       this.tariffRef = validTariffs(saved?.tariffs);
+      // The reference taken from /data keeps its wall date there while it is
+      // unchanged: never the bounded date of a life whose clock was wrong.
+      const last = this.guard.last;
+      this.keptWall =
+        last && kept?.last && last.value === kept.last.value && last.at === kept.last.at
+          ? { value: last.value, at: last.at, wall: saved.last.at }
+          : undefined;
     }
     return this.guard;
   }
@@ -565,18 +578,27 @@ export class P1MonitorApp {
   }
 
   /**
-   * Keeps the guard in /data when its reference, its value held or the
-   * tariffs changed. Its session dates are written as wall dates (the offset
-   * of now), so that a life started before NTP set the clock never leaves
-   * dates that widen the margin of the next life.
+   * Keeps the guard in /data when its reference, its value held, the tariffs
+   * or the offset of the wall clock (to the minute) changed. Its session
+   * dates are written as wall dates (the offset of now): written again when
+   * NTP moves the wall clock, so that a life started before NTP does not
+   * leave its late dates in /data for the next life (review r1, I1). The
+   * reference read from /data and unchanged since keeps its wall date there.
    */
   async saveGuard(indexId) {
     const state = { ...this.guard.state(), tariffs: this.tariffRef ?? null };
     const offset = this.now() - this.sessionNow();
-    const toWall = (ref) =>
-      ref && Number.isFinite(ref.at) ? { ...ref, at: ref.at + offset } : ref;
+    const kept = this.keptWall;
+    const toWall = (ref) => {
+      if (!ref || !Number.isFinite(ref.at)) return ref;
+      if (ref === state.last && kept && ref.value === kept.value && ref.at === kept.at) {
+        return { ...ref, at: kept.wall };
+      }
+      return { ...ref, at: ref.at + offset };
+    };
     const key = JSON.stringify([
       state.last,
+      Math.round(offset / 60_000),
       state.held && {
         direction: state.held.direction,
         from: state.held.from,
@@ -603,15 +625,43 @@ export class P1MonitorApp {
   // --- Configuration screen button --------------------------------------------------
 
   /**
-   * The "Accept the held index" button: takes the value held as shown now
-   * (plus what the home may draw until the next read, src/guard.js), never
-   * anything else. Answers with what will be counted.
+   * "Accept the held index", in two clicks: the first lists the value held
+   * (nothing is accepted), the second, from 3 s to 5 min later, accepts it
+   * only when the guard still holds that value, or, for a rise since, what
+   * the home may have drawn since the first click (src/guard.js margin).
+   * The acceptance itself stays bounded (src/guard.js). A save of the form
+   * never accepts.
    */
   async acceptHeldIndex() {
-    const accepted = this.currentGuard()?.acceptHeld();
-    if (!accepted) {
-      return T.accept.nothing;
+    const guard = this.currentGuard();
+    const held = guard?.held;
+    const mono = this.monotonic();
+    const now = this.sessionNow();
+    const pending = this.pendingAccept;
+    this.pendingAccept = undefined;
+    const elapsed = pending ? mono - pending.at : undefined;
+    if (!pending || elapsed > ACCEPT_CONFIRM_WITHIN || elapsed < ACCEPT_CONFIRM_AFTER) {
+      if (!held) {
+        return T.accept.nothing;
+      }
+      const listed = { direction: held.direction, from: held.from, to: held.to };
+      this.pendingAccept = { at: mono, listedAt: now, guard, listed };
+      return T.accept.confirm(listed, ACCEPT_CONFIRM_WITHIN);
     }
+    const { listed } = pending;
+    // A guard built again since (the device created again) never takes the
+    // first click of the old one.
+    const same =
+      held &&
+      pending.guard === guard &&
+      held.direction === listed.direction &&
+      held.from === listed.from &&
+      held.to >= listed.to &&
+      held.to - listed.to <= margin(pending.listedAt, now);
+    if (!same) {
+      return held ? T.accept.changed(held) : T.accept.nothing;
+    }
+    const accepted = guard.acceptHeld();
     this.logger.info(
       `P1 Monitor consumption index ${accepted.direction === 'down' ? 'drop' : 'jump'} accepted by the user`,
     );

@@ -50,8 +50,9 @@ Gladys ⇄ SDK ⇄ src/app.js (P1MonitorApp)
   confirmed by repetition nor by time: held (kept in
   `/data/p1-monitor-state.json` across restarts), the last accepted value
   sent again, shown in the status (also while unreachable), accepted only by
-  the `accept_held_index` action, bounded to the value shown plus the
-  margin since (a drop then bills nothing, a jump is counted once); a save
+  the `accept_held_index` action in two clicks (the first lists, the
+  second, 3 s to 5 min later, accepts exactly that value), bounded to the
+  value listed plus the margin since (a drop then bills nothing, a jump is counted once); a save
   of the configuration accepts nothing. A value
   equal to the reference never moves its date (a frozen reading never
   shrinks the margin). The other counters are never published at 0.

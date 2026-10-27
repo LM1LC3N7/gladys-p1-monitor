@@ -13,14 +13,20 @@ the notes of the version's GitHub Release.
 ### Changed
 
 - Integration SDK 0.16 (no change for the devices).
+- "Accept the held index" takes two clicks: the first lists the value held
+  and accepts nothing; the second, from 3 seconds to 5 minutes later,
+  accepts exactly that value (or what the home may have used since), never
+  another value read in between.
 
 ### Fixed
 
 - The plausibility check of the consumption index no longer follows the wall
-  clock: a clock moved by hours (NTP, a Raspberry Pi without a hardware clock)
-  neither widens nor narrows the margin of the next rise. It runs on the time
-  elapsed since the start; the dates kept in /data and those read from Gladys
-  are bounded by it.
+  clock while the integration runs: NTP moving the clock by hours neither
+  widens nor narrows the margin of the next rise. It runs on the time elapsed
+  since the start. The dates kept in /data are wall dates, written again
+  when the clock is set, and a date from /data or Gladys ahead of the clock
+  counts as now. Two rare cases remain, documented: a start with the clock
+  hours ahead, and a restart within a minute of the clock being set.
 
 ## [0.1.3] - 2026-10-23
 

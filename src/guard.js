@@ -37,7 +37,8 @@ import { INDEX_MAX_KW, INDEX_SLACK_KWH } from './constants.js';
 const HOUR = 3_600_000;
 
 /** kWh a home may draw between `from` and `to` (ms): the margin of the guard. */
-const margin = (from, to) => (INDEX_MAX_KW * Math.max(0, to - from)) / HOUR + INDEX_SLACK_KWH;
+export const margin = (from, to) =>
+  (INDEX_MAX_KW * Math.max(0, to - from)) / HOUR + INDEX_SLACK_KWH;
 
 /** Whether `value` may follow `previous` (both `{ value, at }`). */
 function follows(previous, value, at) {

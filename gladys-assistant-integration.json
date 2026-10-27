@@ -59,8 +59,8 @@
       "timeout_seconds": 30,
       "label": { "en": "Accept the held index", "fr": "Accepter l'index retenu" },
       "description": {
-        "en": "Only when the status shows a consumption index held back (a jump or a drop) and it is right: takes exactly the value shown. A jump is then counted at once as consumption; a drop bills nothing. Saving the configuration never accepts it.",
-        "fr": "Seulement quand l'état affiche un index de consommation retenu (un saut ou une baisse) et qu'il est juste : prend exactement la valeur affichée. Un saut est alors compté d'un coup comme consommation ; une baisse ne facture rien. Enregistrer la configuration ne l'accepte jamais."
+        "en": "Only when the status shows a consumption index held back (a jump or a drop) and it is right. Two clicks: the first lists the value held and accepts nothing, the second (a few seconds later, within 5 minutes) takes exactly that value. A jump is then counted at once as consumption; a drop bills nothing. Saving the configuration never accepts it.",
+        "fr": "Seulement quand l'état affiche un index de consommation retenu (un saut ou une baisse) et qu'il est juste. Deux clics : le premier liste la valeur retenue et n'accepte rien, le second (quelques secondes plus tard, dans les 5 minutes) prend exactement cette valeur. Un saut est alors compté d'un coup comme consommation ; une baisse ne facture rien. Enregistrer la configuration ne l'accepte jamais."
       }
     }
   ]

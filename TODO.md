@@ -181,10 +181,28 @@ held.at) + 0.5 kWh`, a drop only for `v ≤ held.to + margin`; any other
   moving the wall clock by hours never widens nor narrows its margin. /data
   keeps wall dates (session date + the wall offset of the moment it is
   written), turned back into session dates when the guard loads; a date
-  from /data or from Gladys ahead of the session clock is taken as now. No
-  wait after a restart: a local device read every 10 s. Tested: wall clock
-  10 h ahead, 10 min back, set by NTP before the guard loads, a fresh
-  monotonic clock at each life (a life started 10 h late).
+  from /data or from Gladys ahead of the session clock is taken as now.
+  /data is written again when the wall offset moves (to the minute, in the
+  key of `saveGuard`), and the reference read from /data and unchanged
+  since keeps its wall date there, never the bounded date of a life whose
+  clock was wrong (review r1, I1). No wait after a restart: a local device
+  read every 10 s. Tested: wall clock 10 h ahead, 10 min back, set by NTP
+  before the guard loads (a /data date, a Gladys date, a held value loaded
+  on a failure), a fresh monotonic clock at each life (a life started 10 h
+  late, flat index, then +900 kWh held in the next life).
+  Residuals (as gladys-openems, review r1 m1): a life that STARTS with the
+  wall clock hours ahead takes a glitch up to 100 kW × the error at its
+  first read (L3); a life started before NTP that takes a new value, then
+  restarts less than a minute after NTP (before the next index check
+  rewrites /data), leaves a late date (L2). Safe side: after a long stop of
+  the monotonic clock (machine asleep) or a start without the time, a real
+  rise may stay held until the user accepts it.
+- **Accept in two clicks** (review r1, L6, rule of the fiche): the first
+  click lists the value held (nothing accepted), the second, 3 s to 5 min
+  later on the monotonic clock, accepts it only if the same guard still
+  holds it (same direction and origin, the value listed plus at most the
+  margin since the first click); otherwise "not accepted, changed". The
+  acceptance stays bounded by `src/guard.js`. Memory only.
 - **Order** (review M5): the secondary pages are read in parallel with the
   meter, never after it. A read never overlaps
   another (10 s timeout per request). Logs hold our own codes only: no URL,

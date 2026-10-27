@@ -77,6 +77,9 @@ export const RETRY_MAX = 5 * MINUTE;
 export const STATE_HEARTBEAT = 10 * MINUTE;
 /** The test button answers within this delay. */
 export const TEST_ANSWER_WITHIN = 25 * SECOND;
+/** "Accept the held index": the second click, from 3 s to 5 min after the first. */
+export const ACCEPT_CONFIRM_AFTER = 3 * SECOND;
+export const ACCEPT_CONFIRM_WITHIN = 5 * MINUTE;
 /**
  * The reading of the meter has not changed (same TIMESTAMP_UTC) for this long:
  * the power and the phases are stale (P1 cable out, P1 Monitor stopped

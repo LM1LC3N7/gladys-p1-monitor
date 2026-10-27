@@ -103,7 +103,14 @@ async function setup({
     clock.mono += ms;
     await timers.runIntervals();
   };
-  return { app, gladys, timers, clock, logger, fake, tick };
+  /** "Accept the held index" in two clicks, 5 s apart: the answer of the second. */
+  const accept = async () => {
+    await gladys.fake.action(ACTIONS.ACCEPT_HELD);
+    clock.now += 5_000;
+    clock.mono += 5_000;
+    return gladys.fake.action(ACTIONS.ACCEPT_HELD);
+  };
+  return { app, gladys, timers, clock, logger, fake, tick, accept };
 }
 
 const status = (gladys) => gladys.fake.connectionStatus;
@@ -275,7 +282,7 @@ test('a real drop is held for hours, never confirmed by time; back up, no fictiv
 
 test('a drop accepted by its action: nothing billed, then the index rises normally', async () => {
   const routes = p1Routes();
-  const { app, gladys, tick } = await setup({ routes, devices: [created()] });
+  const { app, gladys, tick, accept } = await setup({ routes, devices: [created()] });
   await app.start(CONFIG);
   await app.idle();
   liveMeter(routes, { CONSUMPTION_KWH_LOW: 3, CONSUMPTION_KWH_HIGH: 2 });
@@ -284,7 +291,7 @@ test('a drop accepted by its action: nothing billed, then the index rises normal
   await app.start(CONFIG, { fresh: true });
   await app.idle();
   assert.deepEqual(distinct(indexes(gladys)), [INDEX]);
-  const answer = await gladys.fake.action(ACTIONS.ACCEPT_HELD);
+  const answer = await accept();
   assert.match(answer.data.message.fr, /de 8432.397 à 5 kWh.*0 kWh est compté/);
   await app.idle();
   assert.equal(indexes(gladys).at(-1), 5);
@@ -310,7 +317,7 @@ test('a frozen reading for 3 hours, then +4 kWh: accepted, nothing held', async 
 
 test('a jump up is held until the user accepts it by its action, then counted once', async () => {
   const routes = p1Routes();
-  const { app, gladys, tick } = await setup({ routes, devices: [created()] });
+  const { app, gladys, tick, accept } = await setup({ routes, devices: [created()] });
   await app.start(CONFIG);
   await app.idle();
   liveMeter(routes, { CONSUMPTION_KWH_LOW: 10436.256 });
@@ -331,7 +338,7 @@ test('a jump up is held until the user accepts it by its action, then counted on
   await app.start(CONFIG, { fresh: true });
   await app.idle();
   assert.deepEqual(distinct(indexes(gladys)), [INDEX]);
-  const answer = await gladys.fake.action(ACTIONS.ACCEPT_HELD);
+  const answer = await accept();
   assert.match(answer.data.message.fr, /5000 kWh .*seront comptés d’un coup/);
   await app.idle();
   assert.deepEqual(distinct(indexes(gladys)), [INDEX, 13432.397]);
@@ -364,7 +371,7 @@ test('a jump held stays held across a restart, until the user accepts it', async
   }
   assert.ok(!indexes(second.gladys).includes(13432.397));
   assert.match(status(second.gladys).message.fr, /sauté/);
-  await second.gladys.fake.action(ACTIONS.ACCEPT_HELD);
+  await second.accept();
   await second.app.idle();
   assert.equal(indexes(second.gladys).at(-1), 13432.397);
 });
@@ -630,7 +637,7 @@ test('the held index stays in the status while the P1 Monitor is unreachable', a
 
 test('an accepted jump never takes another value: held again, nothing billed', async () => {
   const routes = p1Routes();
-  const { app, gladys, tick } = await setup({ routes, devices: [created()] });
+  const { app, gladys, tick, accept } = await setup({ routes, devices: [created()] });
   await app.start(CONFIG);
   await app.idle();
   routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: 5441.256 }, 10));
@@ -638,7 +645,7 @@ test('an accepted jump never takes another value: held again, nothing billed', a
   assert.match(status(gladys).message.fr, /sauté de 8432.397 à 8437.397 kWh/);
   // Meanwhile the meter says 5000 kWh more: the user accepts what was shown.
   routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: 10441.256 }, 20));
-  await gladys.fake.action(ACTIONS.ACCEPT_HELD);
+  await accept();
   await app.idle();
   await tick(MINUTE);
   assert.deepEqual(distinct(indexes(gladys)), [INDEX]);
@@ -808,3 +815,175 @@ test('the wall clock set by NTP before the guard is loaded: /data dates read on 
 });
 
 const round3 = (v) => Math.round(v * 1000) / 1000;
+
+// --- Review r1 of the session clock (migration wave 4) -------------------------
+
+test('r1 I1: a life started 10 h late, flat index, NTP: /data keeps the wall date, +900 held next life', async () => {
+  const store = createMemoryStore();
+  const routes = p1Routes();
+  const key = F('consumption_index');
+  // Life A, on time.
+  const a = await setup({ routes, devices: [created()], store, mono: 40 });
+  await a.app.start(CONFIG);
+  await a.app.idle();
+  await a.app.stop();
+  assert.equal(store.load()[key].last.at, NOW);
+  // Life B, an hour later, started 10 h late (no hardware clock); the index stays flat.
+  const b = await setup({ routes, devices: [created()], store, now: NOW - 9 * HOUR, mono: 30 });
+  await b.app.start(CONFIG);
+  await b.app.idle();
+  await b.tick(MINUTE);
+  // NTP sets the wall clock; an index check after it.
+  b.clock.now += 10 * HOUR;
+  await b.tick(MINUTE);
+  await b.app.stop();
+  // The unchanged reference keeps the wall date of life A, not life B's bounded one.
+  assert.equal(store.load()[key].last.at, NOW);
+  // Life C, on time, a fresh monotonic clock: +900 kWh in about an hour is held.
+  const c = await setup({ routes, devices: [created()], store, now: NOW + HOUR + 3 * MINUTE });
+  c.clock.mono = 20;
+  routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 900 }, 5));
+  await c.app.start(CONFIG);
+  await c.app.idle();
+  assert.ok(!indexes(c.gladys).includes(9332.397));
+  assert.match(status(c.gladys).message.fr, /sauté de 8432.397 à 9332.397 kWh/);
+});
+
+test('r1 I1: the wall offset moving rewrites /data even with the reference unchanged', async () => {
+  const store = createMemoryStore();
+  const routes = p1Routes();
+  const key = F('consumption_index');
+  // Started 10 h late, with nothing in /data: the first value is taken on the late clock.
+  const { app, tick, clock } = await setup({
+    routes,
+    devices: [created()],
+    store,
+    now: NOW - 10 * HOUR,
+    mono: 30,
+  });
+  await app.start(CONFIG);
+  await app.idle();
+  assert.equal(store.load()[key].last.at, NOW - 10 * HOUR);
+  clock.now += 10 * HOUR;
+  await tick(MINUTE);
+  // Written again on the wall clock set by NTP.
+  assert.equal(store.load()[key].last.at, NOW);
+});
+
+test('r1 I2 (K7b): a date from Gladys is converted to the session clock, not only bounded', async () => {
+  const device = created();
+  const index = device.features.find((f) => f.external_id.endsWith(':consumption_index'));
+  index.last_value = INDEX;
+  index.last_value_changed = new Date(NOW - MINUTE).toISOString();
+  const routes = p1Routes();
+  // The process starts 10 h ahead; NTP sets it back before the guard is loaded.
+  const { app, gladys, clock } = await setup({
+    routes,
+    devices: [device],
+    now: NOW + 10 * HOUR,
+    mono: 20,
+  });
+  clock.now = NOW;
+  routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 900 }, 2));
+  await app.start(CONFIG);
+  await app.idle();
+  // The Gladys value is a minute old: +900 kWh is held.
+  assert.ok(!indexes(gladys).includes(9332.397));
+  assert.match(status(gladys).message.fr, /sauté/);
+});
+
+test('r1 I2 (K6): a held value from /data is dated on the session clock at its loading', async () => {
+  const store = createMemoryStore({
+    [F('consumption_index')]: {
+      last: { value: INDEX, at: NOW - MINUTE },
+      held: { direction: 'up', from: INDEX, to: 8482.397, threshold: 8482.397, at: NOW },
+      tariffs: { low: LOW, high: 2996.141 },
+    },
+  });
+  const down = () => {
+    throw timeoutError();
+  };
+  const routes = p1Routes({ [SMARTMETER_PATH]: down });
+  // 10 h ahead at the start, set back by NTP; the P1 Monitor unreachable: the
+  // guard is loaded by the failure status.
+  const { app, gladys, clock, tick, accept } = await setup({
+    routes,
+    devices: [created()],
+    store,
+    now: NOW + 10 * HOUR,
+    mono: 20,
+  });
+  clock.now = NOW;
+  await app.start(CONFIG);
+  await app.idle();
+  assert.match(status(gladys).message.fr, /sauté de 8432.397 à 8482.397 kWh/);
+  assert.match((await accept()).data.message.fr, /Accepté/);
+  // Back with 900 kWh more than the value accepted: held again.
+  routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 950 }, 3));
+  await tick(RETRY_MIN);
+  await app.idle();
+  assert.ok(!indexes(gladys).includes(9382.397));
+  assert.match(status(gladys).message.fr, /sauté de 8432.397 à 9382.397 kWh/);
+});
+
+test('r1 L6: two clicks, the second accepts only the value listed by the first', async () => {
+  const routes = p1Routes();
+  const { app, gladys, tick, clock } = await setup({ routes, devices: [created()] });
+  await app.start(CONFIG);
+  await app.idle();
+  routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 50 }, 2));
+  await tick(MINUTE);
+  assert.match(status(gladys).message.fr, /sauté de 8432.397 à 8482.397 kWh/);
+  const click = async (ms) => {
+    clock.now += ms;
+    clock.mono += ms;
+    const answer = await gladys.fake.action(ACTIONS.ACCEPT_HELD);
+    await app.idle();
+    return answer.data.message;
+  };
+  // The first click accepts nothing, it lists.
+  const first = await click(0);
+  assert.match(first.fr, /Rien n’est encore accepté.*de 8432.397 à 8482.397 kWh \(50 kWh/);
+  assert.match(first.en, /second click accepts exactly/);
+  await tick(MINUTE);
+  assert.ok(!indexes(gladys).includes(8482.397));
+  // A read with +950 comes before the second click: nothing accepted.
+  routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 950 }, 3));
+  await tick(MINUTE);
+  const second = await click(5_000);
+  assert.match(second.fr, /Non accepté.*9382.397 kWh/);
+  await tick(MINUTE);
+  assert.ok(!indexes(gladys).includes(9382.397));
+  // A second click too soon (under 3 s) or too late (over 5 min) only lists again.
+  assert.match(await click(0).then((m) => m.fr), /Rien n’est encore accepté/);
+  assert.match(await click(1_000).then((m) => m.fr), /Rien n’est encore accepté/);
+  assert.match(await click(6 * MINUTE).then((m) => m.fr), /Rien n’est encore accepté/);
+  assert.ok(!indexes(gladys).includes(9382.397));
+  // Listed, then confirmed: taken.
+  assert.match(await click(5_000).then((m) => m.fr), /Accepté.*9382.397 kWh/);
+  await tick(MINUTE);
+  assert.equal(indexes(gladys).at(-1), 9382.397);
+});
+
+test('r1 L6: a first click before the device is created again never accepts on the new one', async () => {
+  const routes = p1Routes();
+  const { app, gladys, tick, clock } = await setup({ routes, devices: [created()] });
+  await app.start(CONFIG);
+  await app.idle();
+  routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 50 }, 2));
+  await tick(MINUTE);
+  await gladys.fake.action(ACTIONS.ACCEPT_HELD);
+  // The device created again: a new guard, the same jump held from the same index.
+  routes[SMARTMETER_PATH] = () => json(meterWith({}, 3));
+  await gladys.fake.deviceCreated(created());
+  await app.idle();
+  routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 50 }, 4));
+  await tick(MINUTE);
+  assert.match(status(gladys).message.fr, /sauté de 8432.397 à 8482.397 kWh/);
+  clock.now += 5_000;
+  clock.mono += 5_000;
+  const answer = await gladys.fake.action(ACTIONS.ACCEPT_HELD);
+  assert.match(answer.data.message.fr, /Non accepté/);
+  await tick(MINUTE);
+  assert.ok(!indexes(gladys).includes(8482.397));
+});

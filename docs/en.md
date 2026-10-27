@@ -85,18 +85,30 @@ Assistant does); the HTTPS of P1 Monitor is not used.
     value is sent again to Gladys, and the integration status shows it. If
     the values come back, they go on normally, without any fictive kWh;
   - a **jump up** (more than 100 kW on average since the last accepted
-    value) is **never** accepted by itself, not by repetition, not by time,
-    not by a restart: every value at or above it stays held (the hold is kept
-    in `/data`), the last accepted value is sent again to Gladys, and the
+    value) is not accepted by itself, not by repetition, not by time: every
+    value at or above it stays held (the hold is kept in `/data` across a
+    restart), the last accepted value is sent again to Gladys, and the
     status shows the jump, even while the P1 Monitor is unreachable;
   - to accept a held value, click **Accept the held index** in the
-    configuration of the integration. The action takes **exactly the value
-    shown** (plus what the home may use until the next read) and answers with
-    what will be counted: for a jump, the difference (for instance 5000 kWh)
-    **will be counted at once as consumption**, accept only if this energy
-    was really consumed; for a drop, nothing is billed and the consumption
-    goes on from there. Another value read afterwards stays held. **Saving
-    the configuration never accepts anything**;
+    configuration of the integration, **twice**. The first click accepts
+    nothing: it answers with the value held and what will be counted. The
+    second click, after a few seconds and within 5 minutes, accepts
+    **exactly that value** (plus what the home may use meanwhile): for a
+    jump, the difference (for instance 5000 kWh) **will be counted at once
+    as consumption**, accept only if this energy was really consumed; for a
+    drop, nothing is billed and the consumption goes on from there. If
+    another value was read between the two clicks, nothing is accepted:
+    click again to see it. Another value read afterwards stays held.
+    **Saving the configuration never accepts anything**;
+  - the margin counts time on the integration's own clock (the time elapsed
+    since it started): the clock of the machine set by hours (NTP, a
+    Raspberry Pi without a battery-backed clock) widens nothing while the
+    integration runs, and a date ahead of the clock counts as now. Two rare
+    cases remain: an integration that **starts** with the clock hours ahead
+    may let a glitch through at its first read (100 kWh per hour of error),
+    and so may the next start after a restart within a minute of the clock
+    being set. After a long stop of the machine (sleep) or a start without
+    the time, a real rise may be held: accept it with the button;
   - if a register stays stuck (for instance a new meter with a tariff staying
     at 0 when it was not) and the status keeps saying "no index", the way
     out is to **delete the device and create it again** from the Discover

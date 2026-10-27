@@ -91,20 +91,32 @@ fait Home Assistant) ; le HTTPS de P1 Monitor n'est pas utilisé.
     l'intégration l'affiche. Si les valeurs reviennent, elles reprennent
     normalement, sans aucun kWh fictif ;
   - un **saut vers le haut** (plus de 100 kW en moyenne depuis la dernière
-    valeur acceptée) n'est **jamais** accepté tout seul, ni par répétition, ni
-    par le temps qui passe, ni par un redémarrage : toute valeur égale ou
-    supérieure reste retenue (la retenue est gardée dans `/data`), la
-    dernière valeur acceptée est renvoyée à Gladys, et l'état affiche le saut,
-    même quand le P1 Monitor est injoignable ;
-  - pour accepter une valeur retenue, cliquez sur **Accepter l'index retenu**
-    dans la configuration de l'intégration. L'action prend **exactement la
-    valeur affichée** (plus ce que le foyer peut consommer d'ici la lecture
-    suivante) et répond avec ce qui sera compté : pour un saut, la différence
-    (par exemple 5000 kWh) **sera comptée d'un coup comme consommation**,
-    n'acceptez que si cette énergie a vraiment été consommée ; pour une
-    baisse, rien n'est facturé et la consommation repart de là. Une autre
-    valeur lue ensuite reste retenue. **Enregistrer la configuration n'accepte
-    jamais rien** ;
+    valeur acceptée) n'est pas accepté tout seul, ni par répétition, ni par le
+    temps qui passe : toute valeur égale ou supérieure reste retenue (la
+    retenue est gardée dans `/data` d'un redémarrage à l'autre), la dernière
+    valeur acceptée est renvoyée à Gladys, et l'état affiche le saut, même
+    quand le P1 Monitor est injoignable ;
+  - pour accepter une valeur retenue, cliquez **deux fois** sur **Accepter
+    l'index retenu** dans la configuration de l'intégration. Le premier clic
+    n'accepte rien : il répond avec la valeur retenue et ce qui sera compté.
+    Le second clic, après quelques secondes et dans les 5 minutes, accepte
+    **exactement cette valeur** (plus ce que le foyer consomme entre-temps) :
+    pour un saut, la différence (par exemple 5000 kWh) **sera comptée d'un
+    coup comme consommation**, n'acceptez que si cette énergie a vraiment été
+    consommée ; pour une baisse, rien n'est facturé et la consommation repart
+    de là. Si une autre valeur a été lue entre les deux clics, rien n'est
+    accepté : cliquez de nouveau pour la voir. Une autre valeur lue ensuite
+    reste retenue. **Enregistrer la configuration n'accepte jamais rien** ;
+  - la marge compte le temps sur l'horloge propre de l'intégration (le temps
+    écoulé depuis son démarrage) : l'heure de la machine corrigée de
+    plusieurs heures (NTP, Raspberry Pi sans horloge sauvegardée) n'élargit
+    rien pendant que l'intégration tourne, et une date en avance compte pour
+    maintenant. Deux cas rares restent : une intégration qui **démarre** avec
+    l'heure en avance de plusieurs heures peut laisser passer un parasite à
+    sa première lecture (100 kWh par heure d'erreur), de même au démarrage
+    suivant un redémarrage survenu moins d'une minute après la correction de
+    l'heure. Après un long arrêt de la machine (veille) ou un démarrage sans
+    l'heure, une vraie hausse peut être retenue : acceptez-la avec le bouton ;
   - si un registre reste bloqué (par exemple un nouveau compteur dont un tarif
     reste à 0 alors qu'il ne l'était pas) et que l'état dit durablement « ne
     donne pas d'index », la sortie est de **supprimer l'appareil puis de le

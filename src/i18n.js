@@ -85,14 +85,14 @@ export const T = {
     held: ({ direction, from, to }) => {
       if (direction === 'down') {
         return {
-          en: `The consumption index dropped from ${from} to ${to} kWh: held back, the last accepted value is sent again. If the meter was really replaced or reset, click "Accept the held index" in the configuration of the integration: nothing is billed for the drop, the consumption goes on from there. Saving the configuration accepts nothing.`,
-          fr: `L’index de consommation a baissé de ${from} à ${to} kWh : retenu, la dernière valeur acceptée est renvoyée. Si le compteur a vraiment été remplacé ou remis à zéro, cliquez sur « Accepter l’index retenu » dans la configuration de l’intégration : rien n’est facturé pour la baisse, la consommation repart de là. Enregistrer la configuration n’accepte rien.`,
+          en: `The consumption index dropped from ${from} to ${to} kWh: held back, the last accepted value is sent again. If the meter was really replaced or reset, click "Accept the held index" twice in the configuration of the integration: nothing is billed for the drop, the consumption goes on from there. Saving the configuration accepts nothing.`,
+          fr: `L’index de consommation a baissé de ${from} à ${to} kWh : retenu, la dernière valeur acceptée est renvoyée. Si le compteur a vraiment été remplacé ou remis à zéro, cliquez deux fois sur « Accepter l’index retenu » dans la configuration de l’intégration : rien n’est facturé pour la baisse, la consommation repart de là. Enregistrer la configuration n’accepte rien.`,
         };
       }
       const kwh = Math.round((to - from) * 1000) / 1000;
       return {
-        en: `The consumption index jumped from ${from} to ${to} kWh: held back, not sent to the energy monitoring. If you click "Accept the held index" in the configuration of the integration, ${kwh} kWh will be counted at once as consumption; accept only if this energy was really consumed. Saving the configuration accepts nothing.`,
-        fr: `L’index de consommation a sauté de ${from} à ${to} kWh : retenu, non envoyé au suivi énergétique. Si vous cliquez sur « Accepter l’index retenu » dans la configuration de l’intégration, ${kwh} kWh seront comptés d’un coup comme consommation ; n’acceptez que si cette énergie a vraiment été consommée. Enregistrer la configuration n’accepte rien.`,
+        en: `The consumption index jumped from ${from} to ${to} kWh: held back, not sent to the energy monitoring. If you click "Accept the held index" twice in the configuration of the integration, ${kwh} kWh will be counted at once as consumption; accept only if this energy was really consumed. Saving the configuration accepts nothing.`,
+        fr: `L’index de consommation a sauté de ${from} à ${to} kWh : retenu, non envoyé au suivi énergétique. Si vous cliquez deux fois sur « Accepter l’index retenu » dans la configuration de l’intégration, ${kwh} kWh seront comptés d’un coup comme consommation ; n’acceptez que si cette énergie a vraiment été consommée. Enregistrer la configuration n’accepte rien.`,
       };
     },
   },
@@ -101,6 +101,29 @@ export const T = {
       en: 'No consumption index is held back: nothing to accept.',
       fr: 'Aucun index de consommation n’est retenu : rien à accepter.',
     },
+    /** The first click: what a second click accepts, nothing accepted yet. */
+    confirm: ({ direction, from, to }, within) => {
+      const kwh = Math.round((to - from) * 1000) / 1000;
+      const what =
+        direction === 'down'
+          ? {
+              en: `the consumption index from ${from} down to ${to} kWh (a reset or a new meter: nothing is billed for the drop, the consumption goes on from there)`,
+              fr: `l’index de consommation de ${from} à ${to} kWh (remise à zéro ou nouveau compteur : rien n’est facturé pour la baisse, la consommation repart de là)`,
+            }
+          : {
+              en: `the consumption index from ${from} to ${to} kWh (${kwh} kWh counted at once as consumption)`,
+              fr: `l’index de consommation de ${from} à ${to} kWh (${kwh} kWh comptés d’un coup comme consommation)`,
+            };
+      return {
+        en: `Nothing accepted yet. A second click accepts exactly ${what.en}. Click "Accept the held index" again, after a few seconds and within ${delay(within).en}; accept only if this is real.`,
+        fr: `Rien n’est encore accepté. Un second clic accepte exactement ${what.fr}. Cliquez de nouveau sur « Accepter l’index retenu », après quelques secondes et dans les ${delay(within).fr} ; n’acceptez que si c’est réel.`,
+      };
+    },
+    /** The second click found another value held than the one listed. */
+    changed: ({ to }) => ({
+      en: `Not accepted: the held index changed since the first click (now ${to} kWh). Click again to list it.`,
+      fr: `Non accepté : l’index retenu a changé depuis le premier clic (maintenant ${to} kWh). Cliquez de nouveau pour le lister.`,
+    }),
     up: ({ from, to }) => {
       const kwh = Math.round((to - from) * 1000) / 1000;
       return {
