@@ -983,7 +983,96 @@ test('r1 L6: a first click before the device is created again never accepts on t
   clock.now += 5_000;
   clock.mono += 5_000;
   const answer = await gladys.fake.action(ACTIONS.ACCEPT_HELD);
-  assert.match(answer.data.message.fr, /Non accepté/);
+  assert.match(answer.data.message.fr, /Non accepté : l’appareil a été recréé/);
   await tick(MINUTE);
   assert.ok(!indexes(gladys).includes(8482.397));
+});
+
+// --- Review r2: the second click on the session and monotonic clocks ----------
+
+/** One click of "Accept the held index", `ms` later on both clocks. */
+async function clickAfter(s, ms) {
+  s.clock.now += ms;
+  s.clock.mono += ms;
+  const answer = await s.gladys.fake.action(ACTIONS.ACCEPT_HELD);
+  await s.app.idle();
+  return answer.data.message.fr;
+}
+
+async function heldAt(rise, low = LOW + rise) {
+  const routes = p1Routes();
+  const s = await setup({ routes, devices: [created()] });
+  await s.app.start(CONFIG);
+  await s.app.idle();
+  routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: low }, 2));
+  await s.tick(MINUTE);
+  return { ...s, routes };
+}
+
+test('r2 (s5 h): the wall clock moved 10 h between the clicks, 5 s apart: accepted', async () => {
+  for (const jump of [10 * HOUR, -10 * HOUR]) {
+    const s = await heldAt(50);
+    assert.match(await clickAfter(s, 0), /Rien n’est encore accepté/);
+    s.clock.now += jump;
+    assert.match(await clickAfter(s, 5_000), /Accepté/, `wall ${jump}`);
+    await s.tick(MINUTE);
+    assert.equal(indexes(s.gladys).at(-1), 8482.397);
+  }
+});
+
+test('r2 (s5 i): +50 listed, the wall clock 10 h ahead, +950 read: not accepted', async () => {
+  const s = await heldAt(50);
+  assert.match(await clickAfter(s, 0), /Rien n’est encore accepté.*8482.397/);
+  s.clock.now += 10 * HOUR;
+  s.routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 950 }, 3));
+  await s.tick(MINUTE);
+  assert.match(await clickAfter(s, 5_000), /Non accepté : l’index retenu a changé.*9382.397/);
+  await s.tick(MINUTE);
+  assert.ok(!indexes(s.gladys).includes(9382.397));
+});
+
+test('r2 (N10): a drop listed at 5 kWh, read again at 3: not accepted at 3', async () => {
+  const s = await heldAt(0);
+  // Both tariffs lower: low 3 + high 2 = 5 kWh, a drop held.
+  s.routes[SMARTMETER_PATH] = () =>
+    json(meterWith({ CONSUMPTION_KWH_LOW: 3, CONSUMPTION_KWH_HIGH: 2 }, 3));
+  await s.tick(MINUTE);
+  assert.match(await clickAfter(s, 0), /Rien n’est encore accepté.*de 8432.397 à 5 kWh/);
+  s.routes[SMARTMETER_PATH] = () =>
+    json(meterWith({ CONSUMPTION_KWH_LOW: 1, CONSUMPTION_KWH_HIGH: 2 }, 4));
+  await s.tick(MINUTE);
+  assert.match(await clickAfter(s, 5_000), /Non accepté/);
+  await s.tick(MINUTE);
+  assert.ok(!indexes(s.gladys).includes(3));
+});
+
+test('r2 (N11): the jump listed ended, another one from a new reference: not accepted', async () => {
+  const s = await heldAt(50);
+  assert.match(await clickAfter(s, 0), /Rien n’est encore accepté.*de 8432.397 à 8482.397/);
+  // Back to normal (the hold ends, a new reference), then a new jump of the same size.
+  s.routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 0.1 }, 3));
+  await s.tick(MINUTE);
+  assert.equal(indexes(s.gladys).at(-1), 8432.497);
+  s.routes[SMARTMETER_PATH] = () => json(meterWith({ CONSUMPTION_KWH_LOW: LOW + 50.1 }, 4));
+  await s.tick(MINUTE);
+  assert.match(status(s.gladys).message.fr, /sauté de 8432.497 à 8482.497 kWh/);
+  assert.match(await clickAfter(s, 5_000), /Non accepté/);
+  await s.tick(MINUTE);
+  assert.ok(!indexes(s.gladys).includes(8482.497));
+});
+
+test('r2 (N4): the same value in Gladys with an older date: that date goes to /data', async () => {
+  const key = F('consumption_index');
+  const store = createMemoryStore({
+    [key]: { last: { value: INDEX, at: NOW - MINUTE }, held: null },
+  });
+  const device = created();
+  const index = device.features.find((f) => f.external_id.endsWith(':consumption_index'));
+  index.last_value = INDEX;
+  index.last_value_changed = new Date(NOW - 2 * HOUR).toISOString();
+  const { app } = await setup({ devices: [device], store, mono: 20 });
+  await app.start(CONFIG);
+  await app.idle();
+  // The oldest date is the reference (src/guard.js), written back as such.
+  assert.equal(store.load()[key].last.at, NOW - 2 * HOUR);
 });

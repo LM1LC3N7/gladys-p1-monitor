@@ -15,8 +15,8 @@ the notes of the version's GitHub Release.
 - Integration SDK 0.16 (no change for the devices).
 - "Accept the held index" takes two clicks: the first lists the value held
   and accepts nothing; the second, from 3 seconds to 5 minutes later,
-  accepts exactly that value (or what the home may have used since), never
-  another value read in between.
+  accepts exactly that value (with what the home may have used since), never
+  a value beyond it read in between.
 
 ### Fixed
 

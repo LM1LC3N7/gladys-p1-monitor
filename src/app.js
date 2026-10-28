@@ -659,7 +659,8 @@ export class P1MonitorApp {
       held.to >= listed.to &&
       held.to - listed.to <= margin(pending.listedAt, now);
     if (!same) {
-      return held ? T.accept.changed(held) : T.accept.nothing;
+      if (!held) return T.accept.nothing;
+      return pending.guard === guard ? T.accept.changed(held) : T.accept.recreated;
     }
     const accepted = guard.acceptHeld();
     this.logger.info(

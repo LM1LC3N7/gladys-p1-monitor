@@ -119,6 +119,11 @@ export const T = {
         fr: `Rien n’est encore accepté. Un second clic accepte exactement ${what.fr}. Cliquez de nouveau sur « Accepter l’index retenu », après quelques secondes et dans les ${delay(within).fr} ; n’acceptez que si c’est réel.`,
       };
     },
+    /** The second click after the device was created again (a new guard). */
+    recreated: {
+      en: 'Not accepted: the device was created again since the first click. Click again to list the value held now.',
+      fr: 'Non accepté : l’appareil a été recréé depuis le premier clic. Cliquez de nouveau pour lister la valeur retenue maintenant.',
+    },
     /** The second click found another value held than the one listed. */
     changed: ({ to }) => ({
       en: `Not accepted: the held index changed since the first click (now ${to} kWh). Click again to list it.`,

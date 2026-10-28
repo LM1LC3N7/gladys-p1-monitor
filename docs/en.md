@@ -96,16 +96,18 @@ Assistant does); the HTTPS of P1 Monitor is not used.
     **exactly that value** (plus what the home may use meanwhile): for a
     jump, the difference (for instance 5000 kWh) **will be counted at once
     as consumption**, accept only if this energy was really consumed; for a
-    drop, nothing is billed and the consumption goes on from there. If
-    another value was read between the two clicks, nothing is accepted:
-    click again to see it. Another value read afterwards stays held.
+    drop, nothing is billed and the consumption goes on from there. The
+    normal consumption of the home between the two clicks is accepted with
+    it; if a value beyond what the home may have used was read between the
+    two clicks, nothing is accepted: click again to see it. Another value read afterwards stays held.
     **Saving the configuration never accepts anything**;
   - the margin counts time on the integration's own clock (the time elapsed
     since it started): the clock of the machine set by hours (NTP, a
     Raspberry Pi without a battery-backed clock) widens nothing while the
     integration runs, and a date ahead of the clock counts as now. Two rare
     cases remain: an integration that **starts** with the clock hours ahead
-    may let a glitch through at its first read (100 kWh per hour of error),
+    may let a glitch through (100 kWh per hour of error) as long as the
+    index has not moved since its start (for instance during solar export),
     and so may the next start after a restart within a minute of the clock
     being set. After a long stop of the machine (sleep) or a start without
     the time, a real rise may be held: accept it with the button;

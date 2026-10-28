@@ -104,8 +104,10 @@ fait Home Assistant) ; le HTTPS de P1 Monitor n'est pas utilisé.
     pour un saut, la différence (par exemple 5000 kWh) **sera comptée d'un
     coup comme consommation**, n'acceptez que si cette énergie a vraiment été
     consommée ; pour une baisse, rien n'est facturé et la consommation repart
-    de là. Si une autre valeur a été lue entre les deux clics, rien n'est
-    accepté : cliquez de nouveau pour la voir. Une autre valeur lue ensuite
+    de là. La consommation normale du foyer entre les deux clics est acceptée
+    avec elle ; si une valeur au-delà de ce que le foyer a pu consommer a été
+    lue entre les deux clics, rien n'est accepté : cliquez de nouveau pour la
+    voir. Une autre valeur lue ensuite
     reste retenue. **Enregistrer la configuration n'accepte jamais rien** ;
   - la marge compte le temps sur l'horloge propre de l'intégration (le temps
     écoulé depuis son démarrage) : l'heure de la machine corrigée de
@@ -113,7 +115,8 @@ fait Home Assistant) ; le HTTPS de P1 Monitor n'est pas utilisé.
     rien pendant que l'intégration tourne, et une date en avance compte pour
     maintenant. Deux cas rares restent : une intégration qui **démarre** avec
     l'heure en avance de plusieurs heures peut laisser passer un parasite à
-    sa première lecture (100 kWh par heure d'erreur), de même au démarrage
+    tant que l'index ne bouge pas depuis son démarrage (par exemple pendant
+    l'export solaire ; 100 kWh par heure d'erreur), de même au démarrage
     suivant un redémarrage survenu moins d'une minute après la correction de
     l'heure. Après un long arrêt de la machine (veille) ou un démarrage sans
     l'heure, une vraie hausse peut être retenue : acceptez-la avec le bouton ;

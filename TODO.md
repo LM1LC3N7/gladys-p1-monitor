@@ -191,8 +191,9 @@ held.at) + 0.5 kWh`, a drop only for `v ≤ held.to + margin`; any other
   on a failure), a fresh monotonic clock at each life (a life started 10 h
   late, flat index, then +900 kWh held in the next life).
   Residuals (as gladys-openems, review r1 m1): a life that STARTS with the
-  wall clock hours ahead takes a glitch up to 100 kW × the error at its
-  first read (L3); a life started before NTP that takes a new value, then
+  wall clock hours ahead takes a glitch up to 100 kW × the error as long as
+  the index stays flat since its start, e.g. solar export (L3, review r2
+  m-r2-1); a life started before NTP that takes a new value, then
   restarts less than a minute after NTP (before the next index check
   rewrites /data), leaves a late date (L2). Safe side: after a long stop of
   the monotonic clock (machine asleep) or a start without the time, a real
@@ -203,6 +204,13 @@ held.at) + 0.5 kWh`, a drop only for `v ≤ held.to + margin`; any other
   holds it (same direction and origin, the value listed plus at most the
   margin since the first click); otherwise "not accepted, changed". The
   acceptance stays bounded by `src/guard.js`. Memory only.
+  Review r2: the margin of the second click and its window are tested with
+  the wall clock moved by ±10 h between the clicks (N13, N14), a drop read
+  lower than listed (N10), a new jump from another reference (N11). The
+  direction check (N12) survives the suite: with the same origin, a held
+  value of the other direction can never be at or above the value listed
+  within the margin since the first click, so it is kept as a guard but no
+  test can tell it apart.
 - **Order** (review M5): the secondary pages are read in parallel with the
   meter, never after it. A read never overlaps
   another (10 s timeout per request). Logs hold our own codes only: no URL,
