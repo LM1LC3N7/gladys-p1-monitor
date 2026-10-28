@@ -2,6 +2,11 @@
 
 ## Before announcing
 
+- [ ] Next patch — review r3 (migration) leftovers: port scenario s8 as a
+      test (a drop listed by the first click, then a jump held from the same
+      reference within 2.5 min: the second click must not accept the jump;
+      mutant N12 accepts it, about 8.8 kWh at most) and fix the TODO note on
+      N12; typo in `docs/fr.md:117` ("un parasite à tant que").
 - [ ] Test on a real Gladys 5.2+ with a real P1 Monitor (ideally a Belgian
       and a Dutch meter, with gas, solar injection, three phases and a water
       meter): test button, device creation, the consumption and cost the
